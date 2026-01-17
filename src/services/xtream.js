@@ -9,7 +9,9 @@
  * - EPG (Electronic Program Guide)
  */
 
-const CORS_PROXY = 'http://localhost:8888';
+import { getProxyUrl } from '@/services/urls.js';
+
+const CORS_PROXY = getProxyUrl();
 
 /**
  * Authenticate with Xtream server and get account info

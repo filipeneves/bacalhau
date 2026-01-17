@@ -109,10 +109,11 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue';
+import { getTranscoderUrl } from '@/services/urls.js';
 
 const model = defineModel({ type: Boolean, default: false });
 
-const TRANSCODER_URL = 'http://localhost:3001';
+const TRANSCODER_URL = getTranscoderUrl();
 
 const recordings = ref([]);
 const loading = ref(false);

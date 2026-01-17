@@ -176,6 +176,7 @@ import { ref, computed, watch } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useEpgStore } from '@/stores/epg';
 import { fetchAndConvertToM3U } from '@/services/xtream';
+import { getProxyUrl } from '@/services/urls.js';
 
 const model = defineModel({ type: Boolean, default: false });
 
@@ -218,7 +219,7 @@ async function importFromUrl() {
     
     try {
         // Use the CORS proxy for external URLs
-        const proxyUrl = `http://localhost:8888/${playlistUrl.value}`;
+        const proxyUrl = `${getProxyUrl()}/${playlistUrl.value}`;
         const response = await fetch(proxyUrl);
         
         if (!response.ok) {

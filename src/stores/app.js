@@ -1,8 +1,12 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
+import { getTranscoderUrl } from '@/services/urls.js';
 
 // Storage key for transcoding settings
 const TRANSCODING_SETTINGS_KEY = 'bacalhau_transcoding_settings';
+
+// Get dynamic transcoder URL based on browser location
+const defaultTranscoderUrl = getTranscoderUrl();
 
 export const useAppStore = defineStore('app', () => {
     const isLoading = ref(false);
@@ -15,7 +19,7 @@ export const useAppStore = defineStore('app', () => {
     const version = ref(import.meta.env.VITE_APP_VERSION || '1.0.0');
     
     // Transcoding settings
-    const transcoderUrl = ref('http://localhost:3001');
+    const transcoderUrl = ref(defaultTranscoderUrl);
     const hwAcceleration = ref('cpu'); // cpu, nvenc, qsv, vaapi, amf
     const hwDecoding = ref(true); // Use hardware decoding when available
     const transcodingPreset = ref('fast'); // ultrafast, superfast, veryfast, faster, fast, medium
@@ -27,7 +31,7 @@ export const useAppStore = defineStore('app', () => {
             const stored = localStorage.getItem(TRANSCODING_SETTINGS_KEY);
             if (stored) {
                 const settings = JSON.parse(stored);
-                transcoderUrl.value = settings.transcoderUrl || 'http://localhost:3001';
+                transcoderUrl.value = settings.transcoderUrl || defaultTranscoderUrl;
                 hwAcceleration.value = settings.hwAcceleration || 'cpu';
                 hwDecoding.value = settings.hwDecoding !== false;
                 transcodingPreset.value = settings.transcodingPreset || 'fast';
