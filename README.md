@@ -52,7 +52,7 @@ services:
     restart: unless-stopped
 
   proxy:
-    image: redocly/cors-anywhere
+    image: ghcr.io/filipeneves/bacalhau-proxy:latest
     ports:
       - "8888:8080"
     restart: unless-stopped
@@ -128,10 +128,11 @@ Then access at: **http://localhost:5173**
 
 | Image | Description |
 |-------|-------------|
-| `ghcr.io/filipeneves/bacalhau:latest` | Web UI (nginx) |
+| `ghcr.io/filipeneves/bacalhau:latest` | Web UI (nginx, multi-arch) |
+| `ghcr.io/filipeneves/bacalhau-proxy:latest` | CORS proxy (multi-arch) |
 | `ghcr.io/filipeneves/bacalhau-transcoder:latest` | CPU-only transcoder (multi-arch) |
-| `ghcr.io/filipeneves/bacalhau-transcoder:latest-vaapi` | AMD/Intel GPU transcoder |
-| `ghcr.io/filipeneves/bacalhau-transcoder:latest-nvidia` | NVIDIA GPU transcoder |
+| `ghcr.io/filipeneves/bacalhau-transcoder:latest-vaapi` | AMD/Intel GPU transcoder (amd64) |
+| `ghcr.io/filipeneves/bacalhau-transcoder:latest-nvidia` | NVIDIA GPU transcoder (amd64) |
 
 ## GPU Acceleration
 
