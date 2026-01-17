@@ -451,12 +451,13 @@ export default {
                     
                     hlsInstance = new Hls({
                         enableWorker: true,
-                        lowLatencyMode: true,
-                        backBufferLength: 30,
+                        lowLatencyMode: false,             // Disable for smoother playback
+                        backBufferLength: 60,
                         liveSyncDurationCount: 3,
                         liveMaxLatencyDurationCount: 6,
-                        maxBufferLength: 10,
-                        maxMaxBufferLength: 30,
+                        maxBufferLength: 30,
+                        maxMaxBufferLength: 60,
+                        maxBufferHole: 0.5,
                         // Custom loader to proxy all requests through CORS proxy
                         xhrSetup: function(xhr, url) {
                             // Skip if already local/proxied
@@ -533,12 +534,13 @@ export default {
                         console.log('Playing transcoded HLS stream');
                         hlsInstance = new Hls({
                             enableWorker: true,
-                            lowLatencyMode: true,
-                            backBufferLength: 30,
-                            liveSyncDurationCount: 2,         // Stay 2 segments behind live
-                            liveMaxLatencyDurationCount: 4,   // Max 4 segments behind
-                            maxBufferLength: 10,              // Buffer up to 10 seconds
-                            maxMaxBufferLength: 30
+                            lowLatencyMode: false,             // Disable for smoother playback
+                            backBufferLength: 60,
+                            liveSyncDurationCount: 3,          // Stay 3 segments behind live
+                            liveMaxLatencyDurationCount: 6,    // Max 6 segments behind
+                            maxBufferLength: 30,               // Buffer up to 30 seconds
+                            maxMaxBufferLength: 60,
+                            maxBufferHole: 0.5                 // Tolerate small gaps
                         });
                         hlsInstance.attachMedia(video);
                         hlsInstance.on(Hls.Events.MEDIA_ATTACHED, () => {
