@@ -1,0 +1,26 @@
+* {
+    font-family: "Kanit", serif;
+}
+/* Global scrollbar styles */
+.channels-list::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+/* Handle */
+.channels-list::-webkit-scrollbar-thumb {
+    background-color: #aa0000;
+}
+
+/* Handle on hover */
+.channels-list::-webkit-scrollbar-thumb:hover {
+    background-color: #fff;
+}
+
+::-webkit-scrollbar {
+    width: 0px;
+}
+
+button {
+    -webkit-app-region: no-drag;
+}

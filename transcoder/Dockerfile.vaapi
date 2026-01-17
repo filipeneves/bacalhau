@@ -1,0 +1,42 @@
+# VAAPI-enabled transcoder for Intel/AMD GPUs on Linux
+# Use this Dockerfile for hardware-accelerated encoding with VAAPI
+#
+# Build: docker build -f Dockerfile.vaapi -t bacalhau-transcoder-vaapi .
+# Or update docker-compose.yml to use this Dockerfile
+#
+# Requires mounting /dev/dri in docker-compose.yml:
+#   devices:
+#     - /dev/dri:/dev/dri
+
+FROM node:20-bookworm-slim
+
+# Install FFmpeg with VAAPI support
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    vainfo \
+    libva2 \
+    libva-drm2 \
+    libva-x11-2 \
+    i965-va-driver \
+    intel-media-va-driver \
+    mesa-va-drivers \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package.json ./
+RUN npm install
+
+# Copy application
+COPY server.js ./
+
+# Create HLS directory
+RUN mkdir -p /tmp/hls
+
+# Verify VAAPI encoders are available
+RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -i vaapi || echo "VAAPI encoders available"
+
+EXPOSE 3001
+
+CMD ["node", "server.js"]

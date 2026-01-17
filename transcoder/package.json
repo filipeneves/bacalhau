@@ -1,0 +1,13 @@
+{
+  "name": "bacalhau-transcoder",
+  "version": "1.0.0",
+  "description": "FFmpeg transcoding service for IPTV streams",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "uuid": "^9.0.0"
+  }
+}

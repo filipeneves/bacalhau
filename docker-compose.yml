@@ -1,0 +1,129 @@
+name: bacalhau
+
+services:
+  # CORS Proxy for streaming
+  proxy:
+    image: redocly/cors-anywhere
+    ports:
+      - "8888:8080"
+
+  # FFmpeg transcoder for MPEG-TS to HLS conversion
+  # Supports GPU-accelerated encoding - see GPU CONFIGURATION below
+  transcoder:
+    build:
+      context: ./transcoder
+      # Use Dockerfile.vaapi for AMD/Intel VAAPI (default)
+      # Use Dockerfile.nvidia for NVIDIA GPUs
+      # Use Dockerfile for CPU-only (works everywhere)
+      dockerfile: Dockerfile.vaapi
+    ports:
+      - "3001:3001"
+    volumes:
+      - hls_data:/tmp/hls
+      - ${RECORDINGS_PATH:-./recordings}:/recordings:z
+      - ${PLAYLISTS_PATH:-./playlists}:/playlists:z
+    environment:
+      - RECORDINGS_DIR=/recordings
+      - PLAYLISTS_DIR=/playlists
+
+    # ╔═══════════════════════════════════════════════════════════════════════╗
+    # ║                        GPU CONFIGURATION                               ║
+    # ╠═══════════════════════════════════════════════════════════════════════╣
+    # ║ Choose ONE of the following GPU configurations based on your hardware ║
+    # ╚═══════════════════════════════════════════════════════════════════════╝
+
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ AMD GPU (VAAPI) - CURRENTLY ACTIVE                                      │
+    # │ Requirements: AMD GPU with Mesa drivers, /dev/dri available             │
+    # │ Dockerfile: Dockerfile.vaapi                                            │
+    # │ Settings App: Select "VAAPI (Linux)" in Transcoding tab                 │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    devices:
+      - /dev/dri:/dev/dri
+    # Add your host's video/render group IDs for GPU access
+    # Find your group IDs with: stat -c '%g' /dev/dri/render*
+    # group_add:
+    #   - "44"   # video group (check with: getent group video)
+    #   - "109"  # render group (check with: getent group render)
+
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ NVIDIA GPU (NVENC/NVDEC)                                                │
+    # │ Requirements:                                                           │
+    # │   1. Install nvidia-container-toolkit:                                  │
+    # │      sudo apt install nvidia-container-toolkit                          │
+    # │      sudo systemctl restart docker                                      │
+    # │   2. Change dockerfile above to: Dockerfile.nvidia                      │
+    # │   3. Comment out AMD section, uncomment NVIDIA section below            │
+    # │ Settings App: Select "NVIDIA NVENC" in Transcoding tab                  │
+    # │                                                                         │
+    # │ Uncomment the following:                                                │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video]
+
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ Intel GPU (Quick Sync / VAAPI)                                          │
+    # │ Requirements: Intel CPU with integrated graphics (6th gen+)             │
+    # │ Dockerfile: Dockerfile.vaapi                                            │
+    # │ Settings App: Select "Intel Quick Sync" or "VAAPI" in Transcoding tab   │
+    # │                                                                         │
+    # │ Use the same devices config as AMD (already active above).              │
+    # │ For some systems, you may need to specifically map renderD128:          │
+    # └─────────────────────────────────────────────────────────────────────────┘
+    # devices:
+    #   - /dev/dri/renderD128:/dev/dri/renderD128
+
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ CPU Only (No GPU)                                                       │
+    # │ Works on any system without GPU drivers                                 │
+    # │ Dockerfile: Dockerfile (base)                                           │
+    # │ Settings App: Select "CPU (Software)" in Transcoding tab                │
+    # │                                                                         │
+    # │ Comment out all devices/deploy sections above                           │
+    # └─────────────────────────────────────────────────────────────────────────┘
+
+  # Production server - serves built static files
+  prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    ports:
+      - "8456:80"
+    environment:
+      - VITE_PROXY_URL=http://localhost:8888
+      - VITE_TRANSCODER_URL=http://localhost:3001
+    depends_on:
+      - proxy
+      - transcoder
+
+  # Development server - runs Vite dev server (use with: docker compose up dev)
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app:z
+      - node_modules:/app/node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_PROXY_URL=http://localhost:8888
+      - VITE_TRANSCODER_URL=http://localhost:3001
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - proxy
+      - transcoder
+    profiles:
+      - dev
+
+volumes:
+  node_modules:
+  hls_data:

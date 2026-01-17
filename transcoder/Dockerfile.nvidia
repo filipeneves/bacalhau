@@ -1,0 +1,44 @@
+# NVIDIA GPU-enabled transcoder with full NVENC/NVDEC support
+# Use this Dockerfile for hardware-accelerated encoding on NVIDIA GPUs
+#
+# Build: docker build -f Dockerfile.nvidia -t bacalhau-transcoder-nvidia .
+# Or update docker-compose.yml to use this Dockerfile
+
+FROM jrottenberg/ffmpeg:6-nvidia AS ffmpeg
+
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+
+# Copy FFmpeg from the jrottenberg image (includes NVENC support)
+COPY --from=ffmpeg /usr/local /usr/local
+
+# Install Node.js and runtime dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    libva2 \
+    libva-drm2 \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Update library cache
+RUN ldconfig
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package.json ./
+RUN npm install
+
+# Copy application
+COPY server.js ./
+
+# Create HLS directory
+RUN mkdir -p /tmp/hls
+
+# Verify FFmpeg has NVENC support
+RUN ffmpeg -hide_banner -encoders 2>/dev/null | grep -i nvenc || echo "Warning: NVENC not available"
+
+EXPOSE 3001
+
+CMD ["node", "server.js"]
