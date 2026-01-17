@@ -28,6 +28,10 @@ npm-debug.log*
 .env.local
 .env.*.local
 
+# Data directories (user data, should not be in image)
+playlists
+recordings
+
 # Docker files (prevent recursive copy)
 Dockerfile
 docker-compose.yml
