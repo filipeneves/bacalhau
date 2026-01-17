@@ -587,9 +587,10 @@ import { useTheme } from 'vuetify';
 import { storeToRefs } from 'pinia';
 import { fetchAndConvertToM3U } from '@/services/xtream';
 import { parse } from 'iptv-playlist-parser';
+import { getTranscoderUrl } from '@/services/urls.js';
 
-// API base URL for playlist storage
-const TRANSCODER_URL = import.meta.env.VITE_TRANSCODER_URL || 'http://localhost:3001';
+// API base URL for playlist storage (dynamic based on browser location)
+const TRANSCODER_URL = getTranscoderUrl();
 
 const model = defineModel({ type: Boolean, default: false });
 

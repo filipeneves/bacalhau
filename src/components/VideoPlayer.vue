@@ -41,6 +41,7 @@
 import { ref, onMounted, watch, computed, onBeforeUnmount, nextTick } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
+import { getTranscoderUrl, getProxyUrl as getProxyUrlBase } from '@/services/urls.js';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
 
@@ -71,10 +72,10 @@ export default {
         let currentStreamId = null; // Track transcoded stream for cleanup
         let currentRecordingId = null; // Track active recording for cleanup
         
-        // CORS proxy URL for external streams
-        const proxyUrl = import.meta.env.VITE_PROXY_URL || 'http://localhost:8888';
+        // CORS proxy URL for external streams (dynamic based on browser location)
+        const proxyUrl = getProxyUrlBase();
         // Transcoder URL for MPEG-TS to HLS conversion and recording
-        const transcoderUrl = import.meta.env.VITE_TRANSCODER_URL || 'http://localhost:3001';
+        const transcoderUrl = getTranscoderUrl();
         
         function getProxiedUrl(url) {
             // Only proxy external URLs, not local ones

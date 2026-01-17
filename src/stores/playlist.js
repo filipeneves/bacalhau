@@ -3,9 +3,10 @@ import { defineStore } from 'pinia'
 import { parse } from 'iptv-playlist-parser';
 import { useAppStore } from './app.js';
 import { useEpgStore } from './epg.js';
+import { getTranscoderUrl } from '@/services/urls.js';
 
-// API base URL for playlist storage
-const TRANSCODER_URL = import.meta.env.VITE_TRANSCODER_URL || 'http://localhost:3001';
+// API base URL for playlist storage (dynamic based on browser location)
+const TRANSCODER_URL = getTranscoderUrl();
 
 export const usePlaylistStore = defineStore('playlist', () => {
 
