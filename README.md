@@ -32,7 +32,60 @@
 
 ## Quick Start
 
-### Using Docker Compose (Recommended)
+### NAS Deployment (Pre-built Images)
+
+For NAS systems like Synology, QNAP, or Unraid, use pre-built images from GitHub Container Registry. No need to clone the repo!
+
+1. Create a `docker-compose.yml` file:
+
+```yaml
+name: bacalhau
+
+services:
+  web:
+    image: ghcr.io/filipeneves/bacalhau:latest
+    ports:
+      - "8456:80"
+    depends_on:
+      - proxy
+      - transcoder
+    restart: unless-stopped
+
+  proxy:
+    image: redocly/cors-anywhere
+    ports:
+      - "8888:8080"
+    restart: unless-stopped
+
+  transcoder:
+    # Choose your image based on GPU:
+    # - ghcr.io/filipeneves/bacalhau-transcoder:latest        (CPU only, multi-arch)
+    # - ghcr.io/filipeneves/bacalhau-transcoder:latest-vaapi  (AMD/Intel GPU)
+    # - ghcr.io/filipeneves/bacalhau-transcoder:latest-nvidia (NVIDIA GPU)
+    image: ghcr.io/filipeneves/bacalhau-transcoder:latest-vaapi
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./recordings:/recordings
+      - ./playlists:/playlists
+    devices:
+      - /dev/dri:/dev/dri  # For AMD/Intel GPU (remove for CPU-only)
+    restart: unless-stopped
+
+volumes:
+  recordings:
+  playlists:
+```
+
+2. Create data directories and start:
+```bash
+mkdir -p recordings playlists
+docker compose up -d
+```
+
+3. Access the player at: **http://your-nas-ip:8456**
+
+### Building from Source
 
 1. Clone the repository:
 ```bash
@@ -68,6 +121,15 @@ Then access at: **http://localhost:5173**
 | **Web UI (dev)** | 5173 | Development server with hot-reload |
 | **CORS Proxy** | 8888 | Proxy for cross-origin streams |
 | **Transcoder** | 3001 | FFmpeg transcoding & playlist storage |
+
+### Available Images
+
+| Image | Description |
+|-------|-------------|
+| `ghcr.io/filipeneves/bacalhau:latest` | Web UI (nginx) |
+| `ghcr.io/filipeneves/bacalhau-transcoder:latest` | CPU-only transcoder (multi-arch) |
+| `ghcr.io/filipeneves/bacalhau-transcoder:latest-vaapi` | AMD/Intel GPU transcoder |
+| `ghcr.io/filipeneves/bacalhau-transcoder:latest-nvidia` | NVIDIA GPU transcoder |
 
 ## GPU Acceleration
 
