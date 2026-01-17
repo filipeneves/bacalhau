@@ -36,7 +36,7 @@
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/pfrfrfr/bacalhau.git
+git clone https://github.com/filipeneves/bacalhau.git
 cd bacalhau
 ```
 
@@ -274,10 +274,10 @@ services:
 For production, use the `prod` profile:
 
 ```bash
-docker compose --profile production up -d prod
+docker compose up -d
 ```
 
-This serves the built static files via nginx on port 8080.
+This serves the built static files via nginx on port 8456.
 
 ## Troubleshooting
 
@@ -347,5 +347,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 <p align="center">
-  🐟 <em>bacalhau</em> means salted codfish in Portuguese
+  🐟 <em>bacalhau</em> means salted codfish in Portuguese<br>
+  🇫🇷 Cooked in France & Luxembourg 🇱🇺 by a Portuguese 🇵🇹
 </p>
