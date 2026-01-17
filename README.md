@@ -58,18 +58,20 @@ services:
     restart: unless-stopped
 
   transcoder:
-    # Choose your image based on GPU:
-    # - ghcr.io/filipeneves/bacalhau-transcoder:latest        (CPU only, multi-arch)
-    # - ghcr.io/filipeneves/bacalhau-transcoder:latest-vaapi  (AMD/Intel GPU)
-    # - ghcr.io/filipeneves/bacalhau-transcoder:latest-nvidia (NVIDIA GPU)
-    image: ghcr.io/filipeneves/bacalhau-transcoder:latest-vaapi
+    # Choose your image based on GPU and architecture:
+    # - ghcr.io/filipeneves/bacalhau-transcoder:latest        (CPU only, amd64 + arm64)
+    # - ghcr.io/filipeneves/bacalhau-transcoder:latest-vaapi  (AMD/Intel GPU, amd64 only)
+    # - ghcr.io/filipeneves/bacalhau-transcoder:latest-nvidia (NVIDIA GPU, amd64 only)
+    # ⚠️ ARM NAS (Synology, etc.): Use the CPU-only image (no -vaapi or -nvidia suffix)
+    image: ghcr.io/filipeneves/bacalhau-transcoder:latest
     ports:
       - "3001:3001"
     volumes:
       - ./recordings:/recordings
       - ./playlists:/playlists
-    devices:
-      - /dev/dri:/dev/dri  # For AMD/Intel GPU (remove for CPU-only)
+    # Uncomment for AMD/Intel GPU on x86 systems:
+    # devices:
+    #   - /dev/dri:/dev/dri
     restart: unless-stopped
 
 volumes:
