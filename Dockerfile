@@ -29,6 +29,10 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 # ============================================
 FROM base AS builder
 
+# Build-time argument for version
+ARG VITE_APP_VERSION=1.0.0
+ENV VITE_APP_VERSION=${VITE_APP_VERSION}
+
 COPY package*.json ./
 RUN npm install
 

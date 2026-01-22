@@ -1,6 +1,6 @@
 {
   "name": "bacalhau-transcoder",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "FFmpeg transcoding service for IPTV streams",
   "main": "server.js",
   "scripts": {

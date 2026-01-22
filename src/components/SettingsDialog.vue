@@ -249,17 +249,43 @@
                                         </v-avatar>
                                     </template>
                                     <v-list-item-title>Created by</v-list-item-title>
-                                    <v-list-item-subtitle>Filipe Neves</v-list-item-subtitle>
+                                    <v-list-item-subtitle>Filipe Neves (Nelen)</v-list-item-subtitle>
                                 </v-list-item>
 
-                                <v-list-item href="https://github.com/pfrfrfr/bacalhau" target="_blank">
+                                <v-list-item href="https://github.com/filipeneves/bacalhau" target="_blank">
                                     <template v-slot:prepend>
                                         <v-avatar color="grey-darken-3" variant="tonal">
                                             <v-icon>mdi-github</v-icon>
                                         </v-avatar>
                                     </template>
                                     <v-list-item-title>GitHub Repository</v-list-item-title>
-                                    <v-list-item-subtitle>github.com/pfrfrfr/bacalhau</v-list-item-subtitle>
+                                    <v-list-item-subtitle>github.com/filipeneves/bacalhau</v-list-item-subtitle>
+                                    <template v-slot:append>
+                                        <v-icon size="small">mdi-open-in-new</v-icon>
+                                    </template>
+                                </v-list-item>
+
+                                <v-list-item href="https://discord.gg/vRND4Ufzgb" target="_blank">
+                                    <template v-slot:prepend>
+                                        <v-avatar color="indigo" variant="tonal">
+                                            <v-icon>mdi-forum</v-icon>
+                                        </v-avatar>
+                                    </template>
+                                    <v-list-item-title>Discord Community</v-list-item-title>
+                                    <v-list-item-subtitle>Join our Discord server</v-list-item-subtitle>
+                                    <template v-slot:append>
+                                        <v-icon size="small">mdi-open-in-new</v-icon>
+                                    </template>
+                                </v-list-item>
+
+                                <v-list-item href="https://ko-fi.com/M4M81SK5K0" target="_blank">
+                                    <template v-slot:prepend>
+                                        <v-avatar color="pink" variant="tonal">
+                                            <v-icon>mdi-heart</v-icon>
+                                        </v-avatar>
+                                    </template>
+                                    <v-list-item-title>Support on Ko-fi</v-list-item-title>
+                                    <v-list-item-subtitle>Buy me a coffee ☕</v-list-item-subtitle>
                                     <template v-slot:append>
                                         <v-icon size="small">mdi-open-in-new</v-icon>
                                     </template>
