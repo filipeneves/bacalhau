@@ -1,4 +1,5 @@
 const express = require('express');
+const session = require('express-session');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -7,17 +8,98 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 const PORT = 3001;
 
+// Authentication configuration (optional)
+const AUTH_ENABLED = process.env.BACALHAU_USER && process.env.BACALHAU_PASSWORD;
+const AUTH_USER = process.env.BACALHAU_USER;
+const AUTH_PASSWORD = process.env.BACALHAU_PASSWORD;
+
+console.log('[Auth] Authentication:', AUTH_ENABLED ? 'ENABLED' : 'DISABLED');
+if (AUTH_ENABLED) {
+    console.log('[Auth] Username configured:', AUTH_USER);
+}
+
+// Session configuration
+app.use(session({
+    secret: process.env.SESSION_SECRET || uuidv4(),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: false, // Set to true if using HTTPS
+        httpOnly: true,
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    }
+}));
+
 // CORS middleware - allow requests from dev server
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Credentials', 'true');
     
     // Handle preflight requests
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
     next();
+});
+
+// Authentication middleware
+function requireAuth(req, res, next) {
+    if (!AUTH_ENABLED) {
+        // No auth required if not configured
+        return next();
+    }
+    
+    if (req.session && req.session.authenticated) {
+        return next();
+    }
+    
+    return res.status(401).json({ error: 'Authentication required', authEnabled: true });
+}
+
+// Auth endpoints
+app.use(express.json());
+
+// Login endpoint
+app.post('/auth/login', (req, res) => {
+    if (!AUTH_ENABLED) {
+        return res.status(400).json({ error: 'Authentication is not enabled' });
+    }
+    
+    const { username, password } = req.body;
+    
+    if (username === AUTH_USER && password === AUTH_PASSWORD) {
+        req.session.authenticated = true;
+        req.session.username = username;
+        console.log('[Auth] User logged in:', username);
+        return res.json({ success: true, username });
+    }
+    
+    console.log('[Auth] Failed login attempt for user:', username);
+    return res.status(401).json({ error: 'Invalid credentials' });
+});
+
+// Logout endpoint
+app.post('/auth/logout', (req, res) => {
+    const username = req.session?.username;
+    req.session.destroy((err) => {
+        if (err) {
+            console.error('[Auth] Error destroying session:', err);
+            return res.status(500).json({ error: 'Logout failed' });
+        }
+        console.log('[Auth] User logged out:', username);
+        res.json({ success: true });
+    });
+});
+
+// Check auth status
+app.get('/auth/status', (req, res) => {
+    res.json({
+        authEnabled: AUTH_ENABLED,
+        authenticated: AUTH_ENABLED ? (req.session?.authenticated || false) : true,
+        username: req.session?.username || null
+    });
 });
 
 // Store active streams
@@ -251,7 +333,7 @@ app.use('/hls', express.static(HLS_DIR, {
 }));
 
 // Start transcoding a stream
-app.get('/transcode', async (req, res) => {
+app.get('/transcode', requireAuth, async (req, res) => {
     const streamUrl = req.query.url;
     const hwAccel = req.query.hwaccel || 'cpu';           // cpu, nvenc, qsv, vaapi, amf, videotoolbox
     const hwDecode = req.query.hwdecode !== 'false';       // Enable/disable hardware decoding
@@ -392,7 +474,7 @@ app.get('/transcode', async (req, res) => {
 });
 
 // Stop a stream
-app.delete('/stream/:streamId', (req, res) => {
+app.delete('/stream/:streamId', requireAuth, (req, res) => {
     const { streamId } = req.params;
     
     if (activeStreams.has(streamId)) {
@@ -404,7 +486,7 @@ app.delete('/stream/:streamId', (req, res) => {
 });
 
 // List active streams
-app.get('/streams', (req, res) => {
+app.get('/streams', requireAuth, (req, res) => {
     const streams = Array.from(activeStreams.entries()).map(([id, data]) => ({
         streamId: id,
         sourceUrl: data.sourceUrl,
@@ -416,7 +498,7 @@ app.get('/streams', (req, res) => {
 // ==================== RECORDING ENDPOINTS ====================
 
 // Start recording a stream
-app.post('/record/start', express.json(), (req, res) => {
+app.post('/record/start', requireAuth, express.json(), (req, res) => {
     const { streamId, channelName } = req.body;
     
     if (!streamId) {
@@ -525,7 +607,7 @@ app.post('/record/start', express.json(), (req, res) => {
 });
 
 // Stop a recording
-app.post('/record/stop', express.json(), express.text({ type: 'text/plain' }), async (req, res) => {
+app.post('/record/stop', requireAuth, express.json(), express.text({ type: 'text/plain' }), async (req, res) => {
     // Handle both JSON and text/plain (for sendBeacon)
     let recordingId;
     
@@ -611,7 +693,7 @@ app.post('/record/stop', express.json(), express.text({ type: 'text/plain' }), a
 });
 
 // List active recordings
-app.get('/recordings/active', (req, res) => {
+app.get('/recordings/active', requireAuth, (req, res) => {
     const recordings = Array.from(activeRecordings.entries()).map(([id, data]) => ({
         recordingId: id,
         channelName: data.channelName,
@@ -623,7 +705,7 @@ app.get('/recordings/active', (req, res) => {
 });
 
 // List saved recordings
-app.get('/recordings', (req, res) => {
+app.get('/recordings', requireAuth, (req, res) => {
     try {
         const files = fs.readdirSync(RECORDINGS_DIR)
             .filter(f => f.endsWith('.mp4'))
@@ -647,7 +729,7 @@ app.get('/recordings', (req, res) => {
 });
 
 // Download a recording
-app.get('/recordings/:filename', (req, res) => {
+app.get('/recordings/:filename', requireAuth, (req, res) => {
     const { filename } = req.params;
     const filePath = path.join(RECORDINGS_DIR, filename);
     
@@ -664,7 +746,7 @@ app.get('/recordings/:filename', (req, res) => {
 });
 
 // Delete a recording
-app.delete('/recordings/:filename', (req, res) => {
+app.delete('/recordings/:filename', requireAuth, (req, res) => {
     const { filename } = req.params;
     const filePath = path.join(RECORDINGS_DIR, filename);
     
@@ -751,7 +833,7 @@ app.get('/playlists', (req, res) => {
 
 // Get active playlist ID (stored in a special file)
 // NOTE: This must come BEFORE /playlists/:id to avoid "active" being matched as an id
-app.get('/playlists/active/current', (req, res) => {
+app.get('/playlists/active/current', requireAuth, (req, res) => {
     const activePath = path.join(PLAYLISTS_DIR, '.active');
     
     try {
@@ -769,7 +851,7 @@ app.get('/playlists/active/current', (req, res) => {
 
 // Set active playlist
 // NOTE: This must come BEFORE /playlists/:id to avoid "active" being matched as an id
-app.put('/playlists/active/current', express.json(), (req, res) => {
+app.put('/playlists/active/current', requireAuth, express.json(), (req, res) => {
     const { playlistId } = req.body;
     const activePath = path.join(PLAYLISTS_DIR, '.active');
     
@@ -797,7 +879,7 @@ app.put('/playlists/active/current', express.json(), (req, res) => {
 });
 
 // Get single playlist with full content
-app.get('/playlists/:id', (req, res) => {
+app.get('/playlists/:id', requireAuth, (req, res) => {
     const { id } = req.params;
     const filePath = path.join(PLAYLISTS_DIR, `${id}.json`);
     
@@ -815,7 +897,7 @@ app.get('/playlists/:id', (req, res) => {
 });
 
 // Create new playlist
-app.post('/playlists', express.json({ limit: '50mb' }), (req, res) => {
+app.post('/playlists', requireAuth, express.json({ limit: '50mb' }), (req, res) => {
     try {
         const { 
             name, channels, rawContent, url, epgUrl, xtream,
@@ -856,7 +938,7 @@ app.post('/playlists', express.json({ limit: '50mb' }), (req, res) => {
 });
 
 // Update existing playlist
-app.put('/playlists/:id', express.json({ limit: '50mb' }), (req, res) => {
+app.put('/playlists/:id', requireAuth, express.json({ limit: '50mb' }), (req, res) => {
     const { id } = req.params;
     const filePath = path.join(PLAYLISTS_DIR, `${id}.json`);
     
@@ -897,7 +979,7 @@ app.put('/playlists/:id', express.json({ limit: '50mb' }), (req, res) => {
 });
 
 // Delete playlist
-app.delete('/playlists/:id', (req, res) => {
+app.delete('/playlists/:id', requireAuth, (req, res) => {
     const { id } = req.params;
     const filePath = path.join(PLAYLISTS_DIR, `${id}.json`);
     

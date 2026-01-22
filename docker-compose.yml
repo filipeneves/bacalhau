@@ -27,6 +27,10 @@ services:
     environment:
       - RECORDINGS_DIR=/recordings
       - PLAYLISTS_DIR=/playlists
+      # Optional authentication - uncomment and set to enable login
+      # - BACALHAU_USER=admin
+      # - BACALHAU_PASSWORD=changeme
+      # - SESSION_SECRET=your-secret-key-here
 
     # ╔═══════════════════════════════════════════════════════════════════════╗
     # ║                        GPU CONFIGURATION                               ║

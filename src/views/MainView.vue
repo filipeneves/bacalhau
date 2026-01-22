@@ -26,6 +26,12 @@
                 <v-btn icon tile title="Settings" @click="showSettings = true">
                     <v-icon>mdi-cog</v-icon>
                 </v-btn>
+
+                <v-spacer></v-spacer>
+
+                <v-btn v-if="authEnabled" icon tile title="Logout" @click="handleLogout" color="error">
+                    <v-icon>mdi-logout</v-icon>
+                </v-btn>
             </v-toolbar>
         </v-navigation-drawer>
 
@@ -116,12 +122,14 @@ import EpgDialog from '@/components/EpgDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import RecordingsDialog from '@/components/RecordingsDialog.vue';
 import ImportPlaylistDialog from '@/components/ImportPlaylistDialog.vue';
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, onMounted } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
 import { useEpgStore } from '@/stores/epg';
 import { storeToRefs } from 'pinia';
 import { useTheme } from 'vuetify';
+import { useRouter } from 'vue-router';
+import { checkAuthStatus, logout } from '@/services/api';
 
 
 export default {
@@ -133,11 +141,13 @@ export default {
         const app = useAppStore();
         const epg = useEpgStore();
         const theme = useTheme();
+        const router = useRouter();
 
         // timer for recording
         const recordingStartTime = ref(null);
         const recordingDuration = ref(0);
         const menuExpanded = ref(true);
+        const authEnabled = ref(false);
 
         // EPG dialog
         const showEpgDialog = ref(false);
@@ -155,6 +165,11 @@ export default {
 
         const searchQuery = ref('');
 
+        // Check auth status on mount
+        onMounted(async () => {
+            const status = await checkAuthStatus();
+            authEnabled.value = status.authEnabled;
+        });
         function toggleMenu() {
             menuExpanded.value = !menuExpanded.value;
         }
@@ -213,6 +228,16 @@ export default {
             app.setRecording(!app.isRecording);
         };
 
+        const handleLogout = async () => {
+            const result = await logout();
+            if (result.success) {
+                console.log('[MainView] Logout successful, redirecting to login');
+                router.push('/login');
+            } else {
+                console.error('[MainView] Logout failed');
+            }
+        };
+
         return {
             currentChannel,
             playlist,
@@ -232,6 +257,8 @@ export default {
             showSettings,
             showRecordings,
             showImportPlaylist,
+            authEnabled,
+            handleLogout,
         };
 
     },
