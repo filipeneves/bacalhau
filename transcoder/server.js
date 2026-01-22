@@ -9,7 +9,7 @@ const app = express();
 const PORT = 3001;
 
 // Authentication configuration (optional)
-const AUTH_ENABLED = process.env.BACALHAU_USER && process.env.BACALHAU_PASSWORD;
+const AUTH_ENABLED = !!(process.env.BACALHAU_USER && process.env.BACALHAU_PASSWORD);
 const AUTH_USER = process.env.BACALHAU_USER;
 const AUTH_PASSWORD = process.env.BACALHAU_PASSWORD;
 
