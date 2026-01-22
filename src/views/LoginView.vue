@@ -8,8 +8,8 @@
                             <v-card-title class="text-center pa-6">
                                 <div class="logo-container">
                                     <v-img src="/logo.png" alt="bacalhau" width="80" class="mx-auto mb-4"></v-img>
-                                    <h2 class="text-h4">bacalhau</h2>
-                                    <p class="text-caption text-grey mt-2">Authentication Required</p>
+                                    <h2 class="text-h4 logo-text">bacalhau</h2>
+                                    <p class="text-caption subtitle-text mt-2">Authentication Required</p>
                                 </div>
                             </v-card-title>
 
@@ -24,6 +24,9 @@
                                         :disabled="loading"
                                         autofocus
                                         required
+                                        class="login-input"
+                                        color="green"
+                                        base-color="grey-lighten-1"
                                     ></v-text-field>
 
                                     <v-text-field
@@ -36,6 +39,9 @@
                                         :error-messages="errors.password"
                                         :disabled="loading"
                                         required
+                                        class="login-input"
+                                        color="green"
+                                        base-color="grey-lighten-1"
                                         @click:append-inner="showPassword = !showPassword"
                                         @keyup.enter="handleLogin"
                                     ></v-text-field>
@@ -52,12 +58,12 @@
 
                                     <v-btn
                                         type="submit"
-                                        color="primary"
+                                        color="green-darken-2"
                                         size="large"
                                         block
                                         :loading="loading"
                                         :disabled="!username || !password"
-                                        class="mt-2"
+                                        class="mt-2 login-button"
                                     >
                                         <v-icon start>mdi-login</v-icon>
                                         Login
@@ -65,7 +71,7 @@
                                 </v-form>
                             </v-card-text>
 
-                            <v-card-text class="text-center text-caption text-grey pb-4">
+                            <v-card-text class="text-center text-caption version-text pb-4">
                                 <p class="mb-0">v{{ version }}</p>
                             </v-card-text>
                         </v-card>
@@ -138,19 +144,62 @@ async function handleLogin() {
 
 <style scoped>
 .login-background {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 50%, #1a1a1a 100%);
     min-height: 100vh;
 }
 
 .login-card {
-    background: rgba(255, 255, 255, 0.95) !important;
+    background: rgba(30, 30, 30, 0.95) !important;
+    border: 1px solid rgba(76, 175, 80, 0.3);
 }
 
 .logo-container {
     width: 100%;
 }
 
+.logo-text {
+    color: #4caf50 !important;
+    font-weight: 600;
+    text-shadow: 0 0 20px rgba(76, 175, 80, 0.3);
+}
+
+.subtitle-text {
+    color: #9ccc65 !important;
+}
+
+.version-text {
+    color: #66bb6a !important;
+}
+
+.login-input :deep(.v-field) {
+    background-color: rgba(50, 50, 50, 0.6);
+    border-color: rgba(76, 175, 80, 0.3);
+}
+
+.login-input :deep(.v-field__input) {
+    color: #ffffff !important;
+}
+
+.login-input :deep(.v-label) {
+    color: #9ccc65 !important;
+}
+
+.login-input :deep(.v-field--focused) {
+    background-color: rgba(60, 60, 60, 0.8);
+}
+
+.login-button {
+    background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%) !important;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.login-button:hover {
+    box-shadow: 0 0 20px rgba(76, 175, 80, 0.4);
+}
+
 :deep(.v-theme--dark) .login-card {
     background: rgba(30, 30, 30, 0.95) !important;
 }
 </style>
+
