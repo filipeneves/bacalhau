@@ -525,8 +525,22 @@ app.post('/record/start', express.json(), (req, res) => {
 });
 
 // Stop a recording
-app.post('/record/stop', express.json(), async (req, res) => {
-    const { recordingId } = req.body;
+app.post('/record/stop', express.json(), express.text({ type: 'text/plain' }), async (req, res) => {
+    // Handle both JSON and text/plain (for sendBeacon)
+    let recordingId;
+    
+    if (typeof req.body === 'string') {
+        // sendBeacon sends as text/plain, parse it
+        try {
+            const parsed = JSON.parse(req.body);
+            recordingId = parsed.recordingId;
+        } catch (e) {
+            return res.status(400).json({ error: 'Invalid request body' });
+        }
+    } else {
+        // Normal JSON request
+        recordingId = req.body.recordingId;
+    }
     
     if (!recordingId) {
         return res.status(400).json({ error: 'Missing recordingId in request body' });
