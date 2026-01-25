@@ -61,8 +61,15 @@ export default {
         const isFullscreen = ref(false);
         const isLiveStream = ref(true); // Assume live by default, will be updated when playing
         const isPlaying = ref(false);
-        const isMuted = ref(false);
-        const volume = ref(1);
+        
+        // Load volume settings from localStorage
+        const VOLUME_STORAGE_KEY = 'bacalhau_video_volume';
+        const MUTED_STORAGE_KEY = 'bacalhau_video_muted';
+        const savedVolume = localStorage.getItem(VOLUME_STORAGE_KEY);
+        const savedMuted = localStorage.getItem(MUTED_STORAGE_KEY);
+        
+        const isMuted = ref(savedMuted === 'true');
+        const volume = ref(savedVolume ? parseFloat(savedVolume) : 1);
         const controlsVisible = ref(true);
         let controlsTimeout = null;
 
@@ -147,9 +154,26 @@ export default {
             }
         }
 
+        // Handle browser close/refresh - stop recording if active
+        function handleBeforeUnload(event) {
+            if (currentRecordingId) {
+                console.log('Browser closing with active recording, stopping recording...');
+                // Use synchronous fetch with keepalive to ensure request completes
+                navigator.sendBeacon(
+                    `${transcoderUrl}/record/stop`,
+                    JSON.stringify({ recordingId: currentRecordingId })
+                );
+                // Note: We can't use async fetch here as the page is unloading
+                // sendBeacon is the browser's way to send data during page unload
+            }
+        }
+
         onMounted(async () => {
             addFullscreenListeners();
             addPiPListeners();
+            
+            // Add beforeunload handler to stop recording when browser closes
+            window.addEventListener('beforeunload', handleBeforeUnload);
             
             // Check PiP support and update store
             const checkPipSupport = () => {
@@ -173,6 +197,7 @@ export default {
         onBeforeUnmount(() => {
             removeFullscreenListeners();
             removePiPListeners();
+            window.removeEventListener('beforeunload', handleBeforeUnload);
             cleanupPlayer();
         });
         
@@ -199,7 +224,14 @@ export default {
                 video.addEventListener('volumechange', () => { 
                     isMuted.value = video.muted;
                     volume.value = video.volume;
+                    // Persist volume settings
+                    localStorage.setItem(VOLUME_STORAGE_KEY, video.volume.toString());
+                    localStorage.setItem(MUTED_STORAGE_KEY, video.muted.toString());
                 });
+                
+                // Restore saved volume/muted state
+                video.volume = volume.value;
+                video.muted = isMuted.value;
             }
         }
         

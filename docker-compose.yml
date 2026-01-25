@@ -3,7 +3,9 @@ name: bacalhau
 services:
   # CORS Proxy for streaming
   proxy:
-    image: redocly/cors-anywhere
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
     ports:
       - "8888:8080"
 
@@ -12,10 +14,10 @@ services:
   transcoder:
     build:
       context: ./transcoder
-      # Use Dockerfile.vaapi for AMD/Intel VAAPI (default)
+      # Use Dockerfile for CPU-only (works everywhere) - DEFAULT
+      # Use Dockerfile.vaapi for AMD/Intel VAAPI
       # Use Dockerfile.nvidia for NVIDIA GPUs
-      # Use Dockerfile for CPU-only (works everywhere)
-      dockerfile: Dockerfile.vaapi
+      dockerfile: Dockerfile
     ports:
       - "3001:3001"
     volumes:
@@ -25,6 +27,10 @@ services:
     environment:
       - RECORDINGS_DIR=/recordings
       - PLAYLISTS_DIR=/playlists
+      # Optional authentication - uncomment and set to enable login
+      # - BACALHAU_USER=admin
+      # - BACALHAU_PASSWORD=changeme
+      # - SESSION_SECRET=your-secret-key-here
 
     # ╔═══════════════════════════════════════════════════════════════════════╗
     # ║                        GPU CONFIGURATION                               ║
@@ -33,13 +39,26 @@ services:
     # ╚═══════════════════════════════════════════════════════════════════════╝
 
     # ┌─────────────────────────────────────────────────────────────────────────┐
-    # │ AMD GPU (VAAPI) - CURRENTLY ACTIVE                                      │
+    # │ CPU Only (No GPU) - DEFAULT                                             │
+    # │ Works on any system without GPU drivers                                 │
+    # │ Dockerfile: Dockerfile (base)                                           │
+    # │ Settings App: Select "CPU (Software)" in Transcoding tab                │
+    # │                                                                         │
+    # │ No additional configuration needed - this is active by default!         │
+    # └─────────────────────────────────────────────────────────────────────────┘
+
+    # ┌─────────────────────────────────────────────────────────────────────────┐
+    # │ AMD GPU (VAAPI)                                                         │
     # │ Requirements: AMD GPU with Mesa drivers, /dev/dri available             │
     # │ Dockerfile: Dockerfile.vaapi                                            │
     # │ Settings App: Select "VAAPI (Linux)" in Transcoding tab                 │
+    # │                                                                         │
+    # │ To enable:                                                              │
+    # │   1. Change dockerfile above to: Dockerfile.vaapi                       │
+    # │   2. Uncomment the devices section below                                │
     # └─────────────────────────────────────────────────────────────────────────┘
-    devices:
-      - /dev/dri:/dev/dri
+    # devices:
+    #   - /dev/dri:/dev/dri
     # Add your host's video/render group IDs for GPU access
     # Find your group IDs with: stat -c '%g' /dev/dri/render*
     # group_add:
@@ -53,10 +72,8 @@ services:
     # │      sudo apt install nvidia-container-toolkit                          │
     # │      sudo systemctl restart docker                                      │
     # │   2. Change dockerfile above to: Dockerfile.nvidia                      │
-    # │   3. Comment out AMD section, uncomment NVIDIA section below            │
+    # │   3. Uncomment the NVIDIA section below                                 │
     # │ Settings App: Select "NVIDIA NVENC" in Transcoding tab                  │
-    # │                                                                         │
-    # │ Uncomment the following:                                                │
     # └─────────────────────────────────────────────────────────────────────────┘
     # deploy:
     #   resources:
@@ -72,20 +89,11 @@ services:
     # │ Dockerfile: Dockerfile.vaapi                                            │
     # │ Settings App: Select "Intel Quick Sync" or "VAAPI" in Transcoding tab   │
     # │                                                                         │
-    # │ Use the same devices config as AMD (already active above).              │
+    # │ Use the same devices config as AMD (see above).                         │
     # │ For some systems, you may need to specifically map renderD128:          │
     # └─────────────────────────────────────────────────────────────────────────┘
     # devices:
     #   - /dev/dri/renderD128:/dev/dri/renderD128
-
-    # ┌─────────────────────────────────────────────────────────────────────────┐
-    # │ CPU Only (No GPU)                                                       │
-    # │ Works on any system without GPU drivers                                 │
-    # │ Dockerfile: Dockerfile (base)                                           │
-    # │ Settings App: Select "CPU (Software)" in Transcoding tab                │
-    # │                                                                         │
-    # │ Comment out all devices/deploy sections above                           │
-    # └─────────────────────────────────────────────────────────────────────────┘
 
   # Production server - serves built static files
   prod:
