@@ -1,6 +1,13 @@
 <template>
-    <v-app class="app">
-        <v-navigation-drawer app permanent width="320" v-model="menuExpanded" class="custom-drawer d-flex flex-column no-scroll">
+    <v-app class="app" ref="appElement" @mousemove="handleMouseMove" @mouseleave="hideDrawerDelayed">
+        <v-navigation-drawer 
+            app 
+            permanent 
+            width="320" 
+            v-model="drawerVisible" 
+            class="custom-drawer d-flex flex-column no-scroll"
+            :class="{ 'fullscreen-drawer': isFullscreen }"
+        >
 
             <!-- Search Toolbar -->
             <v-toolbar flat dense density="compact" class="sticky-search">
@@ -91,12 +98,15 @@
             </v-btn>
         </v-app-bar>
 
-        <v-main class="black-background main-content">
-            <div class="video-epg-container">
-                <div class="video-wrapper">
-                    <VideoPlayer />
+        <v-main class="black-background main-content" :class="{ 'fullscreen-main': isFullscreen }">
+            <div class="video-epg-container" :class="{ 'fullscreen-video-container': isFullscreen }">
+                <div class="video-wrapper" :class="{ 'fullscreen-video-wrapper': isFullscreen }">
+                    <VideoPlayer @toggle-fullscreen="toggleFullscreen" />
                 </div>
-                <CurrentChannelEpg />
+                <CurrentChannelEpg 
+                    v-if="!isFullscreen || epgVisible" 
+                    :class="{ 'fullscreen-epg': isFullscreen }"
+                />
             </div>
         </v-main>
 
@@ -122,7 +132,7 @@ import EpgDialog from '@/components/EpgDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import RecordingsDialog from '@/components/RecordingsDialog.vue';
 import ImportPlaylistDialog from '@/components/ImportPlaylistDialog.vue';
-import { computed, ref, watch, onMounted } from 'vue';
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
 import { useEpgStore } from '@/stores/epg';
@@ -148,6 +158,11 @@ export default {
         const recordingDuration = ref(0);
         const menuExpanded = ref(true);
         const authEnabled = ref(false);
+        const appElement = ref(null);
+        const isFullscreen = ref(false);
+        const drawerVisible = ref(true);
+        const epgVisible = ref(true);
+        let mouseIdleTimeout = null;
 
         // EPG dialog
         const showEpgDialog = ref(false);
@@ -238,6 +253,86 @@ export default {
             }
         };
 
+        // Fullscreen handling
+        function toggleFullscreen() {
+            const app = appElement.value?.$el || appElement.value;
+            if (!document.fullscreenElement) {
+                app?.requestFullscreen().catch(err => console.error("Error entering fullscreen:", err));
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function checkFullscreen() {
+            isFullscreen.value = !!document.fullscreenElement;
+            // Show drawer and EPG when entering fullscreen
+            if (isFullscreen.value) {
+                drawerVisible.value = true;
+                epgVisible.value = true;
+                hideDrawerAndEpgDelayed();
+            } else {
+                drawerVisible.value = true;
+                epgVisible.value = true;
+                if (mouseIdleTimeout) {
+                    clearTimeout(mouseIdleTimeout);
+                }
+            }
+        }
+
+        function handleMouseMove() {
+            if (!isFullscreen.value) return;
+            
+            // Show drawer and EPG when mouse moves
+            drawerVisible.value = true;
+            epgVisible.value = true;
+            
+            // Reset the hide timer
+            hideDrawerAndEpgDelayed();
+        }
+
+        function hideDrawerAndEpgDelayed() {
+            if (!isFullscreen.value) return;
+            
+            if (mouseIdleTimeout) {
+                clearTimeout(mouseIdleTimeout);
+            }
+            
+            mouseIdleTimeout = setTimeout(() => {
+                if (isFullscreen.value) {
+                    drawerVisible.value = false;
+                    epgVisible.value = false;
+                }
+            }, 3000); // Hide after 3 seconds of no mouse movement
+        }
+
+        function addFullscreenListeners() {
+            document.addEventListener("fullscreenchange", checkFullscreen);
+            document.addEventListener("webkitfullscreenchange", checkFullscreen);
+            document.addEventListener("mozfullscreenchange", checkFullscreen);
+            document.addEventListener("msfullscreenchange", checkFullscreen);
+        }
+
+        function removeFullscreenListeners() {
+            document.removeEventListener("fullscreenchange", checkFullscreen);
+            document.removeEventListener("webkitfullscreenchange", checkFullscreen);
+            document.removeEventListener("mozfullscreenchange", checkFullscreen);
+            document.removeEventListener("msfullscreenchange", checkFullscreen);
+        }
+
+        onMounted(() => {
+            addFullscreenListeners();
+        });
+
+        onBeforeUnmount(() => {
+            removeFullscreenListeners();
+            if (mouseIdleTimeout) {
+                clearTimeout(mouseIdleTimeout);
+            }
+            if (recordingInterval) {
+                clearInterval(recordingInterval);
+            }
+        });
+
         return {
             currentChannel,
             playlist,
@@ -259,6 +354,12 @@ export default {
             showImportPlaylist,
             authEnabled,
             handleLogout,
+            appElement,
+            isFullscreen,
+            drawerVisible,
+            epgVisible,
+            toggleFullscreen,
+            handleMouseMove,
         };
 
     },
@@ -329,6 +430,41 @@ export default {
 
 .pip-disabled {
     opacity: 0.5;
+}
+
+/* Fullscreen mode styles */
+.fullscreen-drawer {
+    z-index: 2100 !important;
+    transition: transform 0.3s ease-in-out;
+}
+
+.fullscreen-main {
+    width: 100vw !important;
+    height: 100vh !important;
+}
+
+.fullscreen-video-container {
+    height: 100vh !important;
+}
+
+.fullscreen-video-wrapper {
+    height: 100vh !important;
+}
+
+.fullscreen-epg {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 2050;
+    max-height: 30vh;
+    transition: transform 0.3s ease-in-out;
+    background: rgba(0, 0, 0, 0.9);
+}
+
+/* Hide app bar and other elements in fullscreen */
+.app:fullscreen .v-app-bar {
+    display: none;
 }
 
 @keyframes blink {
