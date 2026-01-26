@@ -1,12 +1,12 @@
 <template>
-    <v-app class="app" ref="appElement" @mousemove="handleMouseMove" @mouseleave="hideDrawerDelayed">
+    <v-app class="app" ref="appElement" @mousemove="handleMouseMove" @mouseleave="hideDrawerDelayed" @touchstart="handleTouchStart">
         <v-navigation-drawer 
             app 
             permanent 
-            width="320" 
+            :width="isMobile ? 280 : 320" 
             v-model="drawerVisible" 
             class="custom-drawer d-flex flex-column no-scroll"
-            :class="{ 'fullscreen-drawer': isFullscreen }"
+            :class="{ 'fullscreen-drawer': isFullscreen, 'mobile-drawer': isMobile }"
         >
 
             <!-- Search Toolbar -->
@@ -42,8 +42,15 @@
             </v-toolbar>
         </v-navigation-drawer>
 
-        <v-app-bar app dense density="compact" class="pa-0">
-            <v-app-bar-title>
+        <v-app-bar 
+            app 
+            dense 
+            density="compact" 
+            class="pa-0"
+            v-model="appBarVisible"
+            :class="{ 'fullscreen-appbar': isFullscreen }"
+        >
+            <v-app-bar-title class="app-bar-title-custom">
                 <v-row align="center" no-gutters>
                     <v-col cols="auto" class="mr-3">
                     <v-btn @click="toggleMenu" :icon="menuExpanded ? 'mdi-menu-open' : 'mdi-menu-close'" tile></v-btn>   
@@ -52,8 +59,8 @@
                         <v-img v-if="currentChannel?.tvg?.logo" :src="currentChannel?.tvg?.logo" alt="Channel Logo"
                             width="50" class="mr-3" cover></v-img>
                     </v-col>
-                    <v-col>
-                        <span>{{ currentChannel?.name || 'bacalhau v' + version }}</span>
+                    <v-col class="channel-name-col">
+                        <span class="channel-name-text">{{ currentChannel?.name || 'bacalhau v' + version }}</span>
                     </v-col>
                 </v-row>
             </v-app-bar-title>
@@ -104,8 +111,8 @@
                     <VideoPlayer @toggle-fullscreen="toggleFullscreen" />
                 </div>
                 <CurrentChannelEpg 
-                    v-if="!isFullscreen || epgVisible" 
-                    :class="{ 'fullscreen-epg': isFullscreen }"
+                    v-if="(!isFullscreen && !isMobile) || epgVisible" 
+                    :class="{ 'fullscreen-epg': isFullscreen, 'mobile-epg': isMobile }"
                 />
             </div>
         </v-main>
@@ -160,8 +167,17 @@ export default {
         const authEnabled = ref(false);
         const appElement = ref(null);
         const isFullscreen = ref(false);
+        
+        // Detect mobile device
+        const isMobile = ref(false);
+        const checkMobile = () => {
+            isMobile.value = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                            window.innerWidth <= 768;
+        };
+        
         const drawerVisible = ref(true);
         const epgVisible = ref(true);
+        const appBarVisible = ref(true);
         let mouseIdleTimeout = null;
 
         // EPG dialog
@@ -182,6 +198,18 @@ export default {
 
         // Check auth status on mount
         onMounted(async () => {
+            checkMobile();
+            
+            // On mobile, hide UI by default and enter fullscreen-like mode
+            if (isMobile.value) {
+                drawerVisible.value = false;
+                epgVisible.value = false;
+                appBarVisible.value = false;
+                menuExpanded.value = false;
+            }
+            
+            addFullscreenListeners();
+            
             const status = await checkAuthStatus();
             authEnabled.value = status.authEnabled;
         });
@@ -265,14 +293,16 @@ export default {
 
         function checkFullscreen() {
             isFullscreen.value = !!document.fullscreenElement;
-            // Show drawer and EPG when entering fullscreen
+            // Show drawer, EPG, and app bar when entering fullscreen
             if (isFullscreen.value) {
                 drawerVisible.value = true;
                 epgVisible.value = true;
+                appBarVisible.value = true;
                 hideDrawerAndEpgDelayed();
             } else {
                 drawerVisible.value = true;
                 epgVisible.value = true;
+                appBarVisible.value = true;
                 if (mouseIdleTimeout) {
                     clearTimeout(mouseIdleTimeout);
                 }
@@ -280,27 +310,50 @@ export default {
         }
 
         function handleMouseMove() {
-            if (!isFullscreen.value) return;
+            if (!isFullscreen.value && !isMobile.value) return;
             
-            // Show drawer and EPG when mouse moves
+            // Show drawer, EPG, and app bar when mouse moves
             drawerVisible.value = true;
             epgVisible.value = true;
+            appBarVisible.value = true;
             
             // Reset the hide timer
             hideDrawerAndEpgDelayed();
         }
+        
+        function handleTouchStart(event) {
+            if (!isMobile.value) return;
+            
+            // Don't toggle UI if touching interactive elements (drawer, app bar, buttons, dialogs, EPG)
+            const target = event.target;
+            const isInteractiveElement = target.closest('.v-navigation-drawer, .v-app-bar, .v-btn, .channel-row, .v-list-item, .v-dialog, .epg-dialog, .v-overlay, .current-channel-epg');
+            
+            if (isInteractiveElement) return;
+            
+            // Toggle UI visibility on touch
+            const shouldShow = !drawerVisible.value;
+            drawerVisible.value = shouldShow;
+            epgVisible.value = shouldShow;
+            appBarVisible.value = shouldShow;
+            
+            // If showing, hide after 3 seconds
+            if (shouldShow) {
+                hideDrawerAndEpgDelayed();
+            }
+        }
 
         function hideDrawerAndEpgDelayed() {
-            if (!isFullscreen.value) return;
+            if (!isFullscreen.value && !isMobile.value) return;
             
             if (mouseIdleTimeout) {
                 clearTimeout(mouseIdleTimeout);
             }
             
             mouseIdleTimeout = setTimeout(() => {
-                if (isFullscreen.value) {
+                if (isFullscreen.value || isMobile.value) {
                     drawerVisible.value = false;
                     epgVisible.value = false;
+                    appBarVisible.value = false;
                 }
             }, 3000); // Hide after 3 seconds of no mouse movement
         }
@@ -358,8 +411,11 @@ export default {
             isFullscreen,
             drawerVisible,
             epgVisible,
+            appBarVisible,
+            isMobile,
             toggleFullscreen,
             handleMouseMove,
+            handleTouchStart,
         };
 
     },
@@ -416,6 +472,23 @@ export default {
     height: 100vh;
 }
 
+.app-bar-title-custom {
+    overflow: visible !important;
+    max-width: none !important;
+}
+
+.channel-name-col {
+    min-width: 0;
+    flex: 1;
+}
+
+.channel-name-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .record-icon {
     padding-left: 10px;
 }
@@ -434,6 +507,11 @@ export default {
 
 /* Fullscreen mode styles */
 .fullscreen-drawer {
+    z-index: 2100 !important;
+    transition: transform 0.3s ease-in-out;
+}
+
+.fullscreen-appbar {
     z-index: 2100 !important;
     transition: transform 0.3s ease-in-out;
 }
@@ -462,9 +540,24 @@ export default {
     background: rgba(0, 0, 0, 0.9);
 }
 
-/* Hide app bar and other elements in fullscreen */
-.app:fullscreen .v-app-bar {
-    display: none;
+/* Mobile mode styles */
+.mobile-drawer {
+    z-index: 2100 !important;
+    transition: transform 0.3s ease-in-out;
+}
+
+@media (max-width: 768px) {
+    .v-app-bar {
+        font-size: 0.875rem;
+    }
+    
+    .channel-name {
+        font-size: 0.875rem;
+    }
+    
+    .v-btn {
+        min-width: 36px !important;
+    }
 }
 
 @keyframes blink {
