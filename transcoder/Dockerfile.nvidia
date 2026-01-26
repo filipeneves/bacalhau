@@ -31,7 +31,7 @@ COPY package.json ./
 RUN npm install
 
 # Copy application
-COPY server.js ./
+COPY server.js database.js migrate.js ./
 
 # Create HLS directory
 RUN mkdir -p /tmp/hls
