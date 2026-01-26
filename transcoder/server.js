@@ -66,7 +66,7 @@ function requireAuth(req, res, next) {
 }
 
 // Auth endpoints
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // Login endpoint
 app.post('/auth/login', (req, res) => {
@@ -505,7 +505,7 @@ app.get('/streams', requireAuth, (req, res) => {
 // ==================== RECORDING ENDPOINTS ====================
 
 // Start recording a stream
-app.post('/record/start', requireAuth, express.json(), (req, res) => {
+app.post('/record/start', requireAuth, (req, res) => {
     const { streamId, channelName } = req.body;
     
     if (!streamId) {
@@ -614,7 +614,7 @@ app.post('/record/start', requireAuth, express.json(), (req, res) => {
 });
 
 // Stop a recording
-app.post('/record/stop', requireAuth, express.json(), express.text({ type: 'text/plain' }), async (req, res) => {
+app.post('/record/stop', requireAuth, async (req, res) => {
     // Handle both JSON and text/plain (for sendBeacon)
     let recordingId;
     
@@ -839,7 +839,7 @@ app.get('/playlists/active/current', requireAuth, (req, res) => {
 
 // Set active playlist
 // NOTE: This must come BEFORE /playlists/:id to avoid "active" being matched as an id
-app.put('/playlists/active/current', requireAuth, express.json(), (req, res) => {
+app.put('/playlists/active/current', requireAuth, (req, res) => {
     const { playlistId } = req.body;
     
     try {
