@@ -14,7 +14,7 @@ COPY package.json ./
 RUN npm install
 
 # Copy application
-COPY server.js ./
+COPY server.js database.js migrate.js ./
 
 # Create HLS directory
 RUN mkdir -p /tmp/hls
@@ -45,7 +45,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY package.json ./
 RUN npm install
-COPY server.js ./
+COPY server.js database.js migrate.js ./
 RUN mkdir -p /tmp/hls
 
 EXPOSE 3001

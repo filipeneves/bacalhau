@@ -1,6 +1,13 @@
 <template>
-    <v-app class="app">
-        <v-navigation-drawer app permanent width="320" v-model="menuExpanded" class="custom-drawer d-flex flex-column no-scroll">
+    <v-app class="app" ref="appElement" @mousemove="handleMouseMove" @mouseleave="hideDrawerDelayed" @touchstart="handleTouchStart">
+        <v-navigation-drawer 
+            app 
+            permanent 
+            :width="isMobile ? 280 : 320" 
+            v-model="drawerVisible" 
+            class="custom-drawer d-flex flex-column no-scroll"
+            :class="{ 'fullscreen-drawer': isFullscreen, 'mobile-drawer': isMobile }"
+        >
 
             <!-- Search Toolbar -->
             <v-toolbar flat dense density="compact" class="sticky-search">
@@ -35,8 +42,15 @@
             </v-toolbar>
         </v-navigation-drawer>
 
-        <v-app-bar app dense density="compact" class="pa-0">
-            <v-app-bar-title>
+        <v-app-bar 
+            app 
+            dense 
+            density="compact" 
+            class="pa-0"
+            v-model="appBarVisible"
+            :class="{ 'fullscreen-appbar': isFullscreen }"
+        >
+            <v-app-bar-title class="app-bar-title-custom">
                 <v-row align="center" no-gutters>
                     <v-col cols="auto" class="mr-3">
                     <v-btn @click="toggleMenu" :icon="menuExpanded ? 'mdi-menu-open' : 'mdi-menu-close'" tile></v-btn>   
@@ -45,8 +59,8 @@
                         <v-img v-if="currentChannel?.tvg?.logo" :src="currentChannel?.tvg?.logo" alt="Channel Logo"
                             width="50" class="mr-3" cover></v-img>
                     </v-col>
-                    <v-col>
-                        <span>{{ currentChannel?.name || 'bacalhau v' + version }}</span>
+                    <v-col class="channel-name-col">
+                        <span class="channel-name-text">{{ currentChannel?.name || 'bacalhau v' + version }}</span>
                     </v-col>
                 </v-row>
             </v-app-bar-title>
@@ -91,12 +105,15 @@
             </v-btn>
         </v-app-bar>
 
-        <v-main class="black-background main-content">
-            <div class="video-epg-container">
-                <div class="video-wrapper">
-                    <VideoPlayer />
+        <v-main class="black-background main-content" :class="{ 'fullscreen-main': isFullscreen }">
+            <div class="video-epg-container" :class="{ 'fullscreen-video-container': isFullscreen }">
+                <div class="video-wrapper" :class="{ 'fullscreen-video-wrapper': isFullscreen }">
+                    <VideoPlayer @toggle-fullscreen="toggleFullscreen" />
                 </div>
-                <CurrentChannelEpg />
+                <CurrentChannelEpg 
+                    v-if="(!isFullscreen && !isMobile) || epgVisible" 
+                    :class="{ 'fullscreen-epg': isFullscreen, 'mobile-epg': isMobile }"
+                />
             </div>
         </v-main>
 
@@ -122,7 +139,7 @@ import EpgDialog from '@/components/EpgDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import RecordingsDialog from '@/components/RecordingsDialog.vue';
 import ImportPlaylistDialog from '@/components/ImportPlaylistDialog.vue';
-import { computed, ref, watch, onMounted } from 'vue';
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
 import { useEpgStore } from '@/stores/epg';
@@ -148,6 +165,20 @@ export default {
         const recordingDuration = ref(0);
         const menuExpanded = ref(true);
         const authEnabled = ref(false);
+        const appElement = ref(null);
+        const isFullscreen = ref(false);
+        
+        // Detect mobile device
+        const isMobile = ref(false);
+        const checkMobile = () => {
+            isMobile.value = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                            window.innerWidth <= 768;
+        };
+        
+        const drawerVisible = ref(true);
+        const epgVisible = ref(true);
+        const appBarVisible = ref(true);
+        let mouseIdleTimeout = null;
 
         // EPG dialog
         const showEpgDialog = ref(false);
@@ -167,6 +198,18 @@ export default {
 
         // Check auth status on mount
         onMounted(async () => {
+            checkMobile();
+            
+            // On mobile, hide UI by default and enter fullscreen-like mode
+            if (isMobile.value) {
+                drawerVisible.value = false;
+                epgVisible.value = false;
+                appBarVisible.value = false;
+                menuExpanded.value = false;
+            }
+            
+            addFullscreenListeners();
+            
             const status = await checkAuthStatus();
             authEnabled.value = status.authEnabled;
         });
@@ -238,6 +281,111 @@ export default {
             }
         };
 
+        // Fullscreen handling
+        function toggleFullscreen() {
+            const app = appElement.value?.$el || appElement.value;
+            if (!document.fullscreenElement) {
+                app?.requestFullscreen().catch(err => console.error("Error entering fullscreen:", err));
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function checkFullscreen() {
+            isFullscreen.value = !!document.fullscreenElement;
+            // Show drawer, EPG, and app bar when entering fullscreen
+            if (isFullscreen.value) {
+                drawerVisible.value = true;
+                epgVisible.value = true;
+                appBarVisible.value = true;
+                hideDrawerAndEpgDelayed();
+            } else {
+                drawerVisible.value = true;
+                epgVisible.value = true;
+                appBarVisible.value = true;
+                if (mouseIdleTimeout) {
+                    clearTimeout(mouseIdleTimeout);
+                }
+            }
+        }
+
+        function handleMouseMove() {
+            if (!isFullscreen.value && !isMobile.value) return;
+            
+            // Show drawer, EPG, and app bar when mouse moves
+            drawerVisible.value = true;
+            epgVisible.value = true;
+            appBarVisible.value = true;
+            
+            // Reset the hide timer
+            hideDrawerAndEpgDelayed();
+        }
+        
+        function handleTouchStart(event) {
+            if (!isMobile.value) return;
+            
+            // Don't toggle UI if touching interactive elements (drawer, app bar, buttons, dialogs, EPG)
+            const target = event.target;
+            const isInteractiveElement = target.closest('.v-navigation-drawer, .v-app-bar, .v-btn, .channel-row, .v-list-item, .v-dialog, .epg-dialog, .v-overlay, .current-channel-epg');
+            
+            if (isInteractiveElement) return;
+            
+            // Toggle UI visibility on touch
+            const shouldShow = !drawerVisible.value;
+            drawerVisible.value = shouldShow;
+            epgVisible.value = shouldShow;
+            appBarVisible.value = shouldShow;
+            
+            // If showing, hide after 3 seconds
+            if (shouldShow) {
+                hideDrawerAndEpgDelayed();
+            }
+        }
+
+        function hideDrawerAndEpgDelayed() {
+            if (!isFullscreen.value && !isMobile.value) return;
+            
+            if (mouseIdleTimeout) {
+                clearTimeout(mouseIdleTimeout);
+            }
+            
+            mouseIdleTimeout = setTimeout(() => {
+                if (isFullscreen.value || isMobile.value) {
+                    drawerVisible.value = false;
+                    epgVisible.value = false;
+                    appBarVisible.value = false;
+                }
+            }, 3000); // Hide after 3 seconds of no mouse movement
+        }
+
+        function addFullscreenListeners() {
+            document.addEventListener("fullscreenchange", checkFullscreen);
+            document.addEventListener("webkitfullscreenchange", checkFullscreen);
+            document.addEventListener("mozfullscreenchange", checkFullscreen);
+            document.addEventListener("msfullscreenchange", checkFullscreen);
+        }
+
+        function removeFullscreenListeners() {
+            document.removeEventListener("fullscreenchange", checkFullscreen);
+            document.removeEventListener("webkitfullscreenchange", checkFullscreen);
+            document.removeEventListener("mozfullscreenchange", checkFullscreen);
+            document.removeEventListener("msfullscreenchange", checkFullscreen);
+        }
+
+        onMounted(() => {
+            addFullscreenListeners();
+        });
+
+        onBeforeUnmount(() => {
+            removeFullscreenListeners();
+            if (mouseIdleTimeout) {
+                clearTimeout(mouseIdleTimeout);
+            }
+            if (recordingInterval) {
+                clearInterval(recordingInterval);
+            }
+        });
+
         return {
             currentChannel,
             playlist,
@@ -259,6 +407,15 @@ export default {
             showImportPlaylist,
             authEnabled,
             handleLogout,
+            appElement,
+            isFullscreen,
+            drawerVisible,
+            epgVisible,
+            appBarVisible,
+            isMobile,
+            toggleFullscreen,
+            handleMouseMove,
+            handleTouchStart,
         };
 
     },
@@ -315,6 +472,23 @@ export default {
     height: 100vh;
 }
 
+.app-bar-title-custom {
+    overflow: visible !important;
+    max-width: none !important;
+}
+
+.channel-name-col {
+    min-width: 0;
+    flex: 1;
+}
+
+.channel-name-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .record-icon {
     padding-left: 10px;
 }
@@ -329,6 +503,61 @@ export default {
 
 .pip-disabled {
     opacity: 0.5;
+}
+
+/* Fullscreen mode styles */
+.fullscreen-drawer {
+    z-index: 2100 !important;
+    transition: transform 0.3s ease-in-out;
+}
+
+.fullscreen-appbar {
+    z-index: 2100 !important;
+    transition: transform 0.3s ease-in-out;
+}
+
+.fullscreen-main {
+    width: 100vw !important;
+    height: 100vh !important;
+}
+
+.fullscreen-video-container {
+    height: 100vh !important;
+}
+
+.fullscreen-video-wrapper {
+    height: 100vh !important;
+}
+
+.fullscreen-epg {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 2050;
+    max-height: 30vh;
+    transition: transform 0.3s ease-in-out;
+    background: rgba(0, 0, 0, 0.9);
+}
+
+/* Mobile mode styles */
+.mobile-drawer {
+    z-index: 2100 !important;
+    transition: transform 0.3s ease-in-out;
+}
+
+@media (max-width: 768px) {
+    .v-app-bar {
+        font-size: 0.875rem;
+    }
+    
+    .channel-name {
+        font-size: 0.875rem;
+    }
+    
+    .v-btn {
+        min-width: 36px !important;
+    }
 }
 
 @keyframes blink {

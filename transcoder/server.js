@@ -4,9 +4,15 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
+const db = require('./database');
+const { migrate } = require('./migrate');
 
 const app = express();
 const PORT = 3001;
+
+// Initialize database and migrate existing JSON files on startup
+db.initDatabase();
+migrate();
 
 // Authentication configuration (optional)
 const AUTH_ENABLED = !!(process.env.BACALHAU_USER && process.env.BACALHAU_PASSWORD);
@@ -18,8 +24,9 @@ if (AUTH_ENABLED) {
     console.log('[Auth] Username configured:', AUTH_USER);
 }
 
-// Session configuration
+// Session configuration with SQLite store
 app.use(session({
+    store: new db.SQLiteStore(),
     secret: process.env.SESSION_SECRET || uuidv4(),
     resave: false,
     saveUninitialized: false,
@@ -59,7 +66,7 @@ function requireAuth(req, res, next) {
 }
 
 // Auth endpoints
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // Login endpoint
 app.post('/auth/login', (req, res) => {
@@ -498,7 +505,7 @@ app.get('/streams', requireAuth, (req, res) => {
 // ==================== RECORDING ENDPOINTS ====================
 
 // Start recording a stream
-app.post('/record/start', requireAuth, express.json(), (req, res) => {
+app.post('/record/start', requireAuth, (req, res) => {
     const { streamId, channelName } = req.body;
     
     if (!streamId) {
@@ -607,7 +614,7 @@ app.post('/record/start', requireAuth, express.json(), (req, res) => {
 });
 
 // Stop a recording
-app.post('/record/stop', requireAuth, express.json(), express.text({ type: 'text/plain' }), async (req, res) => {
+app.post('/record/stop', requireAuth, async (req, res) => {
     // Handle both JSON and text/plain (for sendBeacon)
     let recordingId;
     
@@ -803,26 +810,13 @@ function cleanupRecording(recordingId) {
 // Get all playlists (metadata only)
 app.get('/playlists', (req, res) => {
     try {
-        const files = fs.readdirSync(PLAYLISTS_DIR);
-        const playlists = [];
-        
-        for (const file of files) {
-            if (file.endsWith('.json')) {
-                try {
-                    const filePath = path.join(PLAYLISTS_DIR, file);
-                    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                    playlists.push({
-                        id: data.id,
-                        name: data.name,
-                        channelCount: data.channels ? data.channels.length : 0,
-                        createdAt: data.createdAt,
-                        updatedAt: data.updatedAt
-                    });
-                } catch (err) {
-                    console.warn(`[Playlists] Error reading ${file}:`, err.message);
-                }
-            }
-        }
+        const playlists = db.getAllPlaylists().map(p => ({
+            id: p.id,
+            name: p.name,
+            channelCount: p.channel_count || 0,
+            createdAt: p.created_at,
+            updatedAt: p.updated_at
+        }));
         
         res.json({ playlists });
     } catch (err) {
@@ -831,18 +825,12 @@ app.get('/playlists', (req, res) => {
     }
 });
 
-// Get active playlist ID (stored in a special file)
+// Get active playlist ID (stored in settings table)
 // NOTE: This must come BEFORE /playlists/:id to avoid "active" being matched as an id
 app.get('/playlists/active/current', requireAuth, (req, res) => {
-    const activePath = path.join(PLAYLISTS_DIR, '.active');
-    
     try {
-        if (fs.existsSync(activePath)) {
-            const activeId = fs.readFileSync(activePath, 'utf8').trim();
-            res.json({ activePlaylistId: activeId || null });
-        } else {
-            res.json({ activePlaylistId: null });
-        }
+        const activeId = db.getSetting('active_playlist');
+        res.json({ activePlaylistId: activeId || null });
     } catch (err) {
         console.error('[Playlists] Error reading active playlist:', err.message);
         res.json({ activePlaylistId: null });
@@ -851,23 +839,20 @@ app.get('/playlists/active/current', requireAuth, (req, res) => {
 
 // Set active playlist
 // NOTE: This must come BEFORE /playlists/:id to avoid "active" being matched as an id
-app.put('/playlists/active/current', requireAuth, express.json(), (req, res) => {
+app.put('/playlists/active/current', requireAuth, (req, res) => {
     const { playlistId } = req.body;
-    const activePath = path.join(PLAYLISTS_DIR, '.active');
     
     try {
         if (playlistId) {
             // Verify playlist exists
-            const playlistPath = path.join(PLAYLISTS_DIR, `${playlistId}.json`);
-            if (!fs.existsSync(playlistPath)) {
+            const playlist = db.getPlaylistById(playlistId);
+            if (!playlist) {
                 return res.status(404).json({ error: 'Playlist not found' });
             }
-            fs.writeFileSync(activePath, playlistId);
+            db.setSetting('active_playlist', playlistId);
         } else {
             // Clear active playlist
-            if (fs.existsSync(activePath)) {
-                fs.unlinkSync(activePath);
-            }
+            db.deleteSetting('active_playlist');
         }
         
         console.log(`[Playlists] Active playlist set to: ${playlistId || 'none'}`);
@@ -881,15 +866,13 @@ app.put('/playlists/active/current', requireAuth, express.json(), (req, res) => 
 // Get single playlist with full content
 app.get('/playlists/:id', requireAuth, (req, res) => {
     const { id } = req.params;
-    const filePath = path.join(PLAYLISTS_DIR, `${id}.json`);
-    
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'Playlist not found' });
-    }
     
     try {
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        res.json(data);
+        const playlist = db.getPlaylistById(id);
+        if (!playlist) {
+            return res.status(404).json({ error: 'Playlist not found' });
+        }
+        res.json(playlist);
     } catch (err) {
         console.error(`[Playlists] Error reading playlist ${id}:`, err.message);
         res.status(500).json({ error: 'Failed to read playlist' });
@@ -909,28 +892,34 @@ app.post('/playlists', requireAuth, express.json({ limit: '50mb' }), (req, res) 
         }
         
         const id = uuidv4();
-        const now = new Date().toISOString();
-        const playlist = {
+        const playlistData = {
             id,
             name,
             channels: channels || [],
             rawContent: rawContent || '',
             url: url || null,
             epgUrl: epgUrl || null,
-            xtream: xtream || null,
-            favoriteCategories: favoriteCategories || [],
-            favoriteChannels: favoriteChannels || [],
-            hiddenCategories: hiddenCategories || [],
-            hiddenChannels: hiddenChannels || [],
-            createdAt: now,
-            updatedAt: now
+            xtream: xtream || null
         };
         
-        const filePath = path.join(PLAYLISTS_DIR, `${id}.json`);
-        fs.writeFileSync(filePath, JSON.stringify(playlist, null, 2));
+        const playlist = db.createPlaylist(playlistData);
+        
+        // Add favorites and hidden items after creation
+        if (favoriteCategories && favoriteCategories.length > 0) {
+            db.updatePlaylist(id, { favoriteCategories });
+        }
+        if (favoriteChannels && favoriteChannels.length > 0) {
+            db.updatePlaylist(id, { favoriteChannels });
+        }
+        if (hiddenCategories && hiddenCategories.length > 0) {
+            db.updatePlaylist(id, { hiddenCategories });
+        }
+        if (hiddenChannels && hiddenChannels.length > 0) {
+            db.updatePlaylist(id, { hiddenChannels });
+        }
         
         console.log(`[Playlists] Created playlist: ${name} (${id})`);
-        res.status(201).json(playlist);
+        res.status(201).json(db.getPlaylistById(id));
     } catch (err) {
         console.error('[Playlists] Error creating playlist:', err.message);
         res.status(500).json({ error: 'Failed to create playlist' });
@@ -940,35 +929,31 @@ app.post('/playlists', requireAuth, express.json({ limit: '50mb' }), (req, res) 
 // Update existing playlist
 app.put('/playlists/:id', requireAuth, express.json({ limit: '50mb' }), (req, res) => {
     const { id } = req.params;
-    const filePath = path.join(PLAYLISTS_DIR, `${id}.json`);
-    
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'Playlist not found' });
-    }
     
     try {
-        const existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const existing = db.getPlaylistById(id);
+        if (!existing) {
+            return res.status(404).json({ error: 'Playlist not found' });
+        }
+        
+        const updateData = {};
         const { 
             name, channels, rawContent, url, epgUrl, xtream,
             favoriteCategories, favoriteChannels, hiddenCategories, hiddenChannels 
         } = req.body;
         
-        const updated = {
-            ...existing,
-            name: name !== undefined ? name : existing.name,
-            channels: channels !== undefined ? channels : existing.channels,
-            rawContent: rawContent !== undefined ? rawContent : existing.rawContent,
-            url: url !== undefined ? url : existing.url,
-            epgUrl: epgUrl !== undefined ? epgUrl : existing.epgUrl,
-            xtream: xtream !== undefined ? xtream : existing.xtream,
-            favoriteCategories: favoriteCategories !== undefined ? favoriteCategories : existing.favoriteCategories,
-            favoriteChannels: favoriteChannels !== undefined ? favoriteChannels : existing.favoriteChannels,
-            hiddenCategories: hiddenCategories !== undefined ? hiddenCategories : existing.hiddenCategories,
-            hiddenChannels: hiddenChannels !== undefined ? hiddenChannels : existing.hiddenChannels,
-            updatedAt: new Date().toISOString()
-        };
+        if (name !== undefined) updateData.name = name;
+        if (channels !== undefined) updateData.channels = channels;
+        if (rawContent !== undefined) updateData.rawContent = rawContent;
+        if (url !== undefined) updateData.url = url;
+        if (epgUrl !== undefined) updateData.epgUrl = epgUrl;
+        if (xtream !== undefined) updateData.xtream = xtream;
+        if (favoriteCategories !== undefined) updateData.favoriteCategories = favoriteCategories;
+        if (favoriteChannels !== undefined) updateData.favoriteChannels = favoriteChannels;
+        if (hiddenCategories !== undefined) updateData.hiddenCategories = hiddenCategories;
+        if (hiddenChannels !== undefined) updateData.hiddenChannels = hiddenChannels;
         
-        fs.writeFileSync(filePath, JSON.stringify(updated, null, 2));
+        const updated = db.updatePlaylist(id, updateData);
         
         console.log(`[Playlists] Updated playlist: ${updated.name} (${id})`);
         res.json(updated);
@@ -981,19 +966,15 @@ app.put('/playlists/:id', requireAuth, express.json({ limit: '50mb' }), (req, re
 // Delete playlist
 app.delete('/playlists/:id', requireAuth, (req, res) => {
     const { id } = req.params;
-    const filePath = path.join(PLAYLISTS_DIR, `${id}.json`);
-    
-    if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'Playlist not found' });
-    }
     
     try {
-        // Get playlist name for logging
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        fs.unlinkSync(filePath);
+        const playlist = db.deletePlaylist(id);
+        if (!playlist) {
+            return res.status(404).json({ error: 'Playlist not found' });
+        }
         
-        console.log(`[Playlists] Deleted playlist: ${data.name} (${id})`);
-        res.json({ message: 'Playlist deleted', id, name: data.name });
+        console.log(`[Playlists] Deleted playlist: ${playlist.name} (${id})`);
+        res.json({ message: 'Playlist deleted', id, name: playlist.name });
     } catch (err) {
         console.error(`[Playlists] Error deleting playlist ${id}:`, err.message);
         res.status(500).json({ error: 'Failed to delete playlist' });

@@ -230,6 +230,51 @@ Create a `.env` file or set these in your environment:
 | `PLAYLISTS_PATH` | `./playlists` | Path to store playlists |
 | `VITE_PROXY_URL` | `http://localhost:8888` | CORS proxy URL |
 | `VITE_TRANSCODER_URL` | `http://localhost:3001` | Transcoder service URL |
+| `BACALHAU_USER` | - | Username for authentication (optional) |
+| `BACALHAU_PASSWORD` | - | Password for authentication (optional) |
+| `SESSION_SECRET` | - | Secret key for session encryption (optional) |
+
+### Authentication
+
+**bacalhau** supports optional password protection for your instance. This is useful when exposing your server to the internet or sharing it with others.
+
+> **⚠️ Note:** The current authentication system is temporary. A full-fledged authentication and user management system with multiple users is planned for a future release.
+
+To enable authentication, add these environment variables to your `docker-compose.yml`:
+
+```yaml
+transcoder:
+  environment:
+    - BACALHAU_USER=your_username
+    - BACALHAU_PASSWORD=your_password
+    - SESSION_SECRET=your-random-secret-key-here
+```
+
+**Example:**
+```yaml
+transcoder:
+  image: ghcr.io/filipeneves/bacalhau-transcoder:latest
+  ports:
+    - "3001:3001"
+  volumes:
+    - ./recordings:/recordings
+    - ./playlists:/playlists
+  environment:
+    - RECORDINGS_DIR=/recordings
+    - PLAYLISTS_DIR=/playlists
+    - BACALHAU_USER=admin
+    - BACALHAU_PASSWORD=changeme
+    - SESSION_SECRET=change-this-to-a-random-string
+  restart: unless-stopped
+```
+
+After enabling authentication, restart the transcoder service:
+```bash
+docker compose down
+docker compose up -d
+```
+
+When you access the app, you'll be prompted to log in with your credentials. Sessions are valid for 7 days.
 
 ### Playlist Storage
 

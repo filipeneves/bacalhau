@@ -29,12 +29,6 @@
             </v-col>
         </v-row>
     </v-container>
-    <!-- control bar with play, pause -->
-    <div v-if="isFullscreen" class="fullscreen-overlay">
-        <span>Fullscreen Mode</span>
-        <v-btn @click="toggleFullscreen" color="primary">Exit Fullscreen</v-btn>
-    </div>
-
 </template>
 
 <script>
@@ -47,8 +41,9 @@ import Hls from 'hls.js';
 
 export default {
     name: 'VideoPlayer',
+    emits: ['toggle-fullscreen'],
 
-    setup() {
+    setup(props, { emit }) {
         const videoElement = ref(null);
         const containerElement = ref(null);
         const videoKey = ref(Date.now());
@@ -146,12 +141,8 @@ export default {
         }
 
         function toggleFullscreen() {
-            const container = containerElement.value?.$el || containerElement.value;
-            if (!document.fullscreenElement) {
-                container?.requestFullscreen().catch(err => console.error("Error entering fullscreen:", err));
-            } else {
-                document.exitFullscreen();
-            }
+            // Emit event to parent (MainView) to handle fullscreen
+            emit('toggle-fullscreen');
         }
 
         // Handle browser close/refresh - stop recording if active

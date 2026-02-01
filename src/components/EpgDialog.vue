@@ -42,9 +42,12 @@
                 <div class="now-indicator" :style="{ left: nowIndicatorPosition + 'px' }" v-if="isNowVisible"></div>
 
                 <!-- Channel rows -->
-                <div class="epg-grid" ref="epgGrid">
+                <div class="epg-grid" ref="epgGrid" @scroll="handleScroll">
+                    <!-- Spacer for scrolling -->
+                    <div :style="{ height: scrollTopSpacer + 'px' }"></div>
+                    
                     <div 
-                        v-for="channel in visibleChannels" 
+                        v-for="channel in renderedChannels" 
                         :key="channel.id" 
                         class="channel-row"
                         :class="{ 'active': channel.id === currentChannelId }"
@@ -67,34 +70,24 @@
 
                         <!-- Programs timeline -->
                         <div class="programs-timeline">
-                            <v-tooltip 
+                            <div 
                                 v-for="program in getChannelPrograms(channel.id)" 
                                 :key="`${channel.id}-${program.start.getTime()}`"
-                                location="top"
+                                class="program-block"
+                                :class="{ 
+                                    'current': isProgramCurrent(program),
+                                    'past': isProgramPast(program),
+                                    'short-program': program.duration < 30
+                                }"
+                                :style="getProgramStyle(program)"
+                                @click="showProgramDetails(program)"
+                                :title="program.title + ' - ' + formatProgramTime(program)"
                             >
-                                <template v-slot:activator="{ props: tooltipProps }">
-                                    <div 
-                                        v-bind="tooltipProps"
-                                        class="program-block"
-                                        :class="{ 
-                                            'current': isProgramCurrent(program),
-                                            'past': isProgramPast(program),
-                                            'short-program': program.duration < 30
-                                        }"
-                                        :style="getProgramStyle(program)"
-                                        @click="showProgramDetails(program)"
-                                    >
-                                        <div class="program-content">
-                                            <span class="program-title">{{ program.title }}</span>
-                                            <span class="program-time">{{ formatProgramTime(program) }}</span>
-                                        </div>
-                                    </div>
-                                </template>
-                                <div class="program-tooltip">
-                                    <strong>{{ program.title }}</strong><br>
-                                    {{ formatProgramTime(program) }} ({{ program.duration }} min)
+                                <div class="program-content">
+                                    <span class="program-title">{{ program.title }}</span>
+                                    <span class="program-time">{{ formatProgramTime(program) }}</span>
                                 </div>
-                            </v-tooltip>
+                            </div>
                             
                             <!-- No programs placeholder -->
                             <div v-if="getChannelPrograms(channel.id).length === 0" class="no-programs">
@@ -102,6 +95,9 @@
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- Spacer for scrolling -->
+                    <div :style="{ height: scrollBottomSpacer + 'px' }"></div>
                 </div>
 
                 <!-- No EPG data message -->
@@ -163,6 +159,11 @@ export default {
         const selectedProgram = ref(null);
         const selectedChannel = ref(null);
         
+        // Virtual scrolling
+        const CHANNEL_ROW_HEIGHT = 60;
+        const BUFFER_SIZE = 10; // Render 10 extra rows above and below
+        const scrollTop = ref(0);
+        
         // Constants - Dynamic hours from now until midnight
         const HOUR_WIDTH = 150;
         const CHANNEL_COLUMN_WIDTH = 180;
@@ -213,6 +214,36 @@ export default {
                 originalChannel: ch
             }));
         });
+        
+        // Virtual scrolling computed properties
+        const visibleStartIndex = computed(() => {
+            return Math.max(0, Math.floor(scrollTop.value / CHANNEL_ROW_HEIGHT) - BUFFER_SIZE);
+        });
+        
+        const visibleEndIndex = computed(() => {
+            const viewportHeight = epgGrid.value?.clientHeight || 600;
+            const visibleRows = Math.ceil(viewportHeight / CHANNEL_ROW_HEIGHT);
+            return Math.min(
+                visibleChannels.value.length,
+                visibleStartIndex.value + visibleRows + BUFFER_SIZE * 2
+            );
+        });
+        
+        const renderedChannels = computed(() => {
+            return visibleChannels.value.slice(visibleStartIndex.value, visibleEndIndex.value);
+        });
+        
+        const scrollTopSpacer = computed(() => {
+            return visibleStartIndex.value * CHANNEL_ROW_HEIGHT;
+        });
+        
+        const scrollBottomSpacer = computed(() => {
+            return (visibleChannels.value.length - visibleEndIndex.value) * CHANNEL_ROW_HEIGHT;
+        });
+        
+        function handleScroll(event) {
+            scrollTop.value = event.target.scrollTop;
+        }
 
         // Calculate hours from current time until midnight
         const hoursUntilMidnight = computed(() => {
@@ -280,14 +311,24 @@ export default {
             const end = program.stop.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             return `${start} - ${end}`;
         }
-
-        function getChannelPrograms(channelId) {
+        
+        // Cache programs for all rendered channels to avoid repeated fetches
+        const channelProgramsCache = computed(() => {
             const start = visibleHours.value[0];
             const lastHour = visibleHours.value[visibleHours.value.length - 1];
-            if (!start || !lastHour) return [];
+            if (!start || !lastHour) return {};
             const end = new Date(lastHour);
             end.setHours(end.getHours() + 1);
-            return epgStore.getProgramsInRange(channelId, start, end);
+            
+            const cache = {};
+            renderedChannels.value.forEach(channel => {
+                cache[channel.id] = epgStore.getProgramsInRange(channel.id, start, end);
+            });
+            return cache;
+        });
+
+        function getChannelPrograms(channelId) {
+            return channelProgramsCache.value[channelId] || [];
         }
 
         function getProgramStyle(program) {
@@ -358,6 +399,10 @@ export default {
             hasEpgData,
             currentChannelId,
             visibleChannels,
+            renderedChannels,
+            scrollTopSpacer,
+            scrollBottomSpacer,
+            handleScroll,
             visibleHours,
             hourWidth,
             timelineWidth,

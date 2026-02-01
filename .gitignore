@@ -20,6 +20,8 @@ coverage
 /cypress/screenshots/
 
 /recordings
+/playlists
+
 
 # Editor directories and files
 .vscode/*
