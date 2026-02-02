@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { getTranscoderUrl } from '@/services/urls.js';
+import packageJson from '../../package.json';
 
 // Storage key for transcoding settings
 const TRANSCODING_SETTINGS_KEY = 'bacalhau_transcoding_settings';
@@ -16,7 +17,7 @@ export const useAppStore = defineStore('app', () => {
     const isRecording = ref(false);
     const recordingSupported = ref(false); // Recording requires active transcoded stream
     const isPlaying = ref(false);
-    const version = ref(import.meta.env.VITE_APP_VERSION || '1.0.0');
+    const version = ref(packageJson.version);
     
     // Transcoding settings
     const transcoderUrl = ref(defaultTranscoderUrl);

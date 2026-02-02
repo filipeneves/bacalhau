@@ -1,6 +1,6 @@
 {
   "name": "bacalhau",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "bacalhau - Self-hosted IPTV Player for NAS and Docker",
   "author": "Filipe Neves <me@filipeneves.net>",
