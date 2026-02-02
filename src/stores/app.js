@@ -18,6 +18,7 @@ export const useAppStore = defineStore('app', () => {
     const recordingSupported = ref(false); // Recording requires active transcoded stream
     const isPlaying = ref(false);
     const version = ref(packageJson.version);
+    const useAllPlaylists = ref(false); // Show channels from all playlists
     
     // Transcoding settings
     const transcoderUrl = ref(defaultTranscoderUrl);
@@ -37,6 +38,7 @@ export const useAppStore = defineStore('app', () => {
                 hwDecoding.value = settings.hwDecoding !== false;
                 transcodingPreset.value = settings.transcodingPreset || 'fast';
                 transcodingQuality.value = settings.transcodingQuality || 'balanced';
+                useAllPlaylists.value = settings.useAllPlaylists || false;
             }
         } catch (err) {
             console.error('Error loading transcoding settings:', err);
@@ -51,7 +53,8 @@ export const useAppStore = defineStore('app', () => {
                 hwAcceleration: hwAcceleration.value,
                 hwDecoding: hwDecoding.value,
                 transcodingPreset: transcodingPreset.value,
-                transcodingQuality: transcodingQuality.value
+                transcodingQuality: transcodingQuality.value,
+                useAllPlaylists: useAllPlaylists.value
             };
             localStorage.setItem(TRANSCODING_SETTINGS_KEY, JSON.stringify(settings));
         } catch (err) {
@@ -112,6 +115,11 @@ export const useAppStore = defineStore('app', () => {
         isPlaying.value = value;
     }
 
+    function setUseAllPlaylists(value) {
+        useAllPlaylists.value = value;
+        saveTranscodingSettings();
+    }
+
     // Initialize settings
     loadTranscodingSettings();
 
@@ -142,5 +150,7 @@ export const useAppStore = defineStore('app', () => {
         setTranscodingPreset,
         transcodingQuality,
         setTranscodingQuality,
+        useAllPlaylists,
+        setUseAllPlaylists,
     };
 });
