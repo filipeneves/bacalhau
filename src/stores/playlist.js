@@ -47,7 +47,8 @@ export const usePlaylistStore = defineStore('playlist', () => {
                             favoriteCategories: fullData.favoriteCategories || [],
                             favoriteChannels: fullData.favoriteChannels || [],
                             hiddenCategories: fullData.hiddenCategories || [],
-                            hiddenChannels: fullData.hiddenChannels || []
+                            hiddenChannels: fullData.hiddenChannels || [],
+                            channels: fullData.channels || [] // Store channels for "use all playlists" feature
                         });
                     }
                 }
@@ -361,7 +362,22 @@ export const usePlaylistStore = defineStore('playlist', () => {
         channels.value = parse(playlist.value).items;
     }
 
-    const getChannels = computed(() => channels.value);
+    const getChannels = computed(() => {
+        // If useAllPlaylists is enabled, merge channels from all playlists
+        if (appStore.useAllPlaylists && savedPlaylists.value.length > 0) {
+            const allChannels = [];
+            for (const pl of savedPlaylists.value) {
+                // Fetch channels for each playlist
+                // Note: This assumes channels are stored in the playlist metadata
+                // We'll need to enhance this to load channels on demand
+                if (pl.channels) {
+                    allChannels.push(...pl.channels);
+                }
+            }
+            return allChannels;
+        }
+        return channels.value;
+    });
     const getCurrentChannel = computed(() => currentChannel.value);
 
     // Get the active playlist object

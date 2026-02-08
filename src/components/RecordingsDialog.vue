@@ -13,6 +13,22 @@
                 </v-btn>
             </v-card-title>
             <v-divider></v-divider>
+            
+            <!-- Search/Filter Bar -->
+            <v-card-text v-if="!loading && !error && recordings.length > 0" class="pb-0">
+                <v-text-field
+                    v-model="searchQuery"
+                    prepend-inner-icon="mdi-magnify"
+                    label="Search recordings"
+                    placeholder="Filter by name or date..."
+                    variant="outlined"
+                    density="compact"
+                    clearable
+                    hide-details
+                    class="mb-4"
+                ></v-text-field>
+            </v-card-text>
+
             <v-card-text class="pa-0">
                 <!-- Loading state -->
                 <div v-if="loading" class="d-flex justify-center align-center pa-8">
@@ -31,10 +47,17 @@
                     <p class="text-caption text-grey">Start recording a channel to see your recordings here.</p>
                 </div>
 
+                <!-- No search results -->
+                <div v-else-if="filteredRecordings.length === 0" class="d-flex flex-column justify-center align-center pa-8 text-center">
+                    <v-icon size="64" color="grey">mdi-magnify</v-icon>
+                    <p class="text-h6 mt-4">No matches found</p>
+                    <p class="text-caption text-grey">Try a different search term</p>
+                </div>
+
                 <!-- Recordings list -->
                 <v-list v-else lines="two" class="recordings-list">
                     <v-list-item
-                        v-for="recording in recordings"
+                        v-for="recording in paginatedRecordings"
                         :key="recording.filename"
                         class="recording-item"
                     >
@@ -75,15 +98,25 @@
                 </v-list>
             </v-card-text>
 
-            <!-- Footer with storage info -->
-            <v-divider v-if="recordings.length > 0"></v-divider>
-            <v-card-actions v-if="recordings.length > 0">
-                <span class="text-caption text-grey ml-2">
-                    {{ recordings.length }} recording{{ recordings.length !== 1 ? 's' : '' }} 
-                    ({{ formatSize(totalSize) }} total)
-                </span>
-                <v-spacer></v-spacer>
-                <v-btn variant="text" @click="close">Close</v-btn>
+            <!-- Pagination -->
+            <v-divider v-if="filteredRecordings.length > 0"></v-divider>
+            <v-card-actions v-if="filteredRecordings.length > 0" class="flex-column align-stretch">
+                <div class="d-flex align-center justify-space-between w-100 px-2">
+                    <span class="text-caption text-grey">
+                        {{ filteredRecordings.length }} recording{{ filteredRecordings.length !== 1 ? 's' : '' }} 
+                        <span v-if="searchQuery">(filtered)</span>
+                        ({{ formatSize(totalFilteredSize) }} total)
+                    </span>
+                    <v-btn variant="text" @click="close">Close</v-btn>
+                </div>
+                <v-pagination
+                    v-if="totalPages > 1"
+                    v-model="currentPage"
+                    :length="totalPages"
+                    :total-visible="5"
+                    density="comfortable"
+                    class="mt-2"
+                ></v-pagination>
             </v-card-actions>
         </v-card>
 
@@ -114,6 +147,7 @@ import { getTranscoderUrl } from '@/services/urls.js';
 const model = defineModel({ type: Boolean, default: false });
 
 const TRANSCODER_URL = getTranscoderUrl();
+const ITEMS_PER_PAGE = 10;
 
 const recordings = ref([]);
 const loading = ref(false);
@@ -122,15 +156,54 @@ const downloadingFile = ref(null);
 const showDeleteConfirm = ref(false);
 const recordingToDelete = ref(null);
 const deleting = ref(false);
+const searchQuery = ref('');
+const currentPage = ref(1);
+
+// Filter recordings based on search query
+const filteredRecordings = computed(() => {
+    if (!searchQuery.value) {
+        return recordings.value;
+    }
+    
+    const query = searchQuery.value.toLowerCase();
+    return recordings.value.filter(recording => {
+        const filename = formatFilename(recording.filename).toLowerCase();
+        const date = formatDate(recording.created).toLowerCase();
+        return filename.includes(query) || date.includes(query);
+    });
+});
+
+// Paginated recordings
+const paginatedRecordings = computed(() => {
+    const start = (currentPage.value - 1) * ITEMS_PER_PAGE;
+    const end = start + ITEMS_PER_PAGE;
+    return filteredRecordings.value.slice(start, end);
+});
+
+// Total pages
+const totalPages = computed(() => {
+    return Math.ceil(filteredRecordings.value.length / ITEMS_PER_PAGE);
+});
 
 const totalSize = computed(() => {
     return recordings.value.reduce((sum, r) => sum + r.size, 0);
+});
+
+const totalFilteredSize = computed(() => {
+    return filteredRecordings.value.reduce((sum, r) => sum + r.size, 0);
+});
+
+// Reset to first page when search query changes
+watch(searchQuery, () => {
+    currentPage.value = 1;
 });
 
 // Load recordings when dialog opens
 watch(model, (isOpen) => {
     if (isOpen) {
         loadRecordings();
+        searchQuery.value = '';
+        currentPage.value = 1;
     }
 });
 

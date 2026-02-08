@@ -335,8 +335,21 @@
                                 <p class="text-caption text-grey">Import a playlist to get started.</p>
                             </div>
 
-                            <!-- Playlist list with expansion panels -->
-                            <v-expansion-panels v-else v-model="expandedPlaylist" variant="accordion">
+                            <div v-else>
+                                <!-- Use All Playlists Toggle -->
+                                <v-switch
+                                    v-model="useAllPlaylists"
+                                    label="Show channels from all playlists"
+                                    hint="When enabled, the channel list will show channels from all playlists instead of just the active one"
+                                    persistent-hint
+                                    color="primary"
+                                    class="mb-4"
+                                ></v-switch>
+                                
+                                <v-divider class="my-4"></v-divider>
+
+                                <!-- Playlist list with expansion panels -->
+                                <v-expansion-panels v-model="expandedPlaylist" variant="accordion">
                                 <v-expansion-panel
                                     v-for="pl in savedPlaylists"
                                     :key="pl.id"
@@ -578,6 +591,7 @@
                                     </v-expansion-panel-text>
                                 </v-expansion-panel>
                             </v-expansion-panels>
+                            </div>
                         </div>
                     </v-card-text>
                 </div>
@@ -646,6 +660,12 @@ const version = computed(() => app.version);
 watch(darkMode, (newVal) => {
     app.setDarkMode(newVal);
     theme.global.name.value = newVal ? 'dark' : 'light';
+});
+
+// Playlist settings
+const useAllPlaylists = computed({
+    get: () => app.useAllPlaylists,
+    set: (value) => app.setUseAllPlaylists(value)
 });
 
 // Transcoding settings
