@@ -8,16 +8,16 @@ export function getTranscoderUrl() {
     return envUrl;
   }
   
-  // In production (not localhost dev server), use the same host
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    // If accessing from a real IP/hostname (not localhost dev), use that host
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      return `http://${hostname}:3001`;
-    }
+  // In production builds, use relative /api path (goes through nginx proxy)
+  if (typeof window !== 'undefined' && import.meta.env.PROD) {
+    const baseUrl = `${window.location.protocol}//${window.location.host}`;
+    const apiUrl = `${baseUrl}/api`;
+    console.log('[ViTV] Using API URL:', apiUrl);
+    return apiUrl;
   }
   
-  // Default for local development
+  // Development mode - direct connection to transcoder
+  console.log('[ViTV] Using direct transcoder URL: http://localhost:3001');
   return 'http://localhost:3001';
 }
 

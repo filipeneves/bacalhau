@@ -86,6 +86,28 @@
                 </template>
                 <span>Recording requires an active stream.<br>Start playing a channel first.</span>
             </v-tooltip>
+            <v-tooltip location="bottom" :disabled="recordingSupported">
+                <template v-slot:activator="{ props }">
+                    <span v-bind="props">
+                        <v-btn 
+                            @click="showShareStream = true" 
+                            :class="isSharing ? 'share-btn' : ''"
+                            :disabled="!recordingSupported && !isSharing"
+                        >
+                            <v-icon :class="isSharing ? 'share-icon' : ''">mdi-share-variant</v-icon>
+                            <span v-if="isSharing" class="ml-2 guest-count-badge">
+                                {{ guestCount }}
+                            </span>
+                        </v-btn>
+                    </span>
+                </template>
+                <span v-if="!isSharing">Share stream requires an active stream.<br>Start playing a channel first.</span>
+                <span v-else-if="guestCount > 0">
+                    {{ guestCount }} viewer{{ guestCount !== 1 ? 's' : '' }} watching:<br>
+                    {{ guestNames.join(', ') }}
+                </span>
+                <span v-else>No viewers yet</span>
+            </v-tooltip>
             <v-tooltip location="bottom" :disabled="pipSupported">
                 <template v-slot:activator="{ props }">
                     <span v-bind="props">
@@ -128,6 +150,9 @@
 
         <!-- Import Playlist Dialog -->
         <ImportPlaylistDialog v-model="showImportPlaylist" />
+
+        <!-- Share Stream Dialog -->
+        <ShareStreamDialog v-model="showShareStream" />
     </v-app>
 </template>
 
@@ -139,6 +164,7 @@ import EpgDialog from '@/components/EpgDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
 import RecordingsDialog from '@/components/RecordingsDialog.vue';
 import ImportPlaylistDialog from '@/components/ImportPlaylistDialog.vue';
+import ShareStreamDialog from '@/components/ShareStreamDialog.vue';
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
@@ -151,7 +177,7 @@ import { checkAuthStatus, logout } from '@/services/api';
 
 export default {
     name: 'App',
-    components: { VideoPlayer, Channels, CurrentChannelEpg, EpgDialog, SettingsDialog, RecordingsDialog, ImportPlaylistDialog },
+    components: { VideoPlayer, Channels, CurrentChannelEpg, EpgDialog, SettingsDialog, RecordingsDialog, ImportPlaylistDialog, ShareStreamDialog },
 
     setup() {
         const playlist = usePlaylistStore();
@@ -192,6 +218,9 @@ export default {
         // Import Playlist dialog
         const showImportPlaylist = ref(false);
 
+        // Share Stream dialog
+        const showShareStream = ref(false);
+
         let recordingInterval = null;
 
         const searchQuery = ref('');
@@ -222,6 +251,9 @@ export default {
 
         const currentChannel = computed(() => playlist.getCurrentChannel);
         const isRecording = computed(() => app.isRecording);
+        const isSharing = computed(() => app.isSharing);
+        const guestCount = computed(() => app.guestCount);
+        const guestNames = computed(() => app.guestNames);
         const version = computed(() => app.version);
         const isDarkMode = computed(() => app.isDarkMode);
         const pipSupported = computed(() => app.pipSupported);
@@ -393,6 +425,9 @@ export default {
             togglePictureInPicture,
             toggleRecording,
             isRecording,
+            isSharing,
+            guestCount,
+            guestNames,
             formattedRecordingTime,
             toggleMenu,
             menuExpanded,
@@ -405,6 +440,7 @@ export default {
             showSettings,
             showRecordings,
             showImportPlaylist,
+            showShareStream,
             authEnabled,
             handleLogout,
             appElement,
@@ -499,6 +535,32 @@ export default {
 
 .record-btn {
     color: red !important;
+}
+
+.share-btn {
+    color: #4CAF50 !important;
+}
+
+.share-icon {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.guest-count-badge {
+    background: rgba(76, 175, 80, 0.3);
+    border-radius: 12px;
+    padding: 2px 8px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    color: #4CAF50;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
 }
 
 .pip-disabled {
