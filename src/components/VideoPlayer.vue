@@ -114,7 +114,28 @@ export default {
                 const data = await response.json();
                 console.log('Transcoder response:', data);
                 currentStreamId = data.streamId;
+                app.setCurrentStreamId(data.streamId); // Store in app state for sharing
                 app.setRecordingSupported(true); // Recording is available with transcoded stream
+                
+                // If sharing is active, update the shared stream with new channel info
+                if (app.isSharing && app.shareId) {
+                    try {
+                        await fetch(`${transcoderUrl}/share/${app.shareId}/update`, {
+                            method: 'PUT',
+                            credentials: 'include',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                streamId: data.streamId,
+                                channelName: currentChannel.value?.name,
+                                channelLogo: currentChannel.value?.tvg?.logo || null
+                            })
+                        });
+                        console.log('[Share] Updated shared stream with new channel');
+                    } catch (err) {
+                        console.warn('[Share] Failed to update shared stream:', err);
+                    }
+                }
+                
                 return `${transcoderUrl}${data.hlsUrl}`;
             } catch (err) {
                 console.error('Failed to get transcoded stream:', err);
@@ -132,6 +153,7 @@ export default {
                     console.warn('Error stopping transcoded stream:', err);
                 }
                 currentStreamId = null;
+                app.setCurrentStreamId(null);
                 app.setRecordingSupported(false); // Recording no longer available
             }
         }

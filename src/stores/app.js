@@ -18,7 +18,15 @@ export const useAppStore = defineStore('app', () => {
     const recordingSupported = ref(false); // Recording requires active transcoded stream
     const isPlaying = ref(false);
     const version = ref(packageJson.version);
+    console.log('[App Store] Version initialized:', version.value);
     const useAllPlaylists = ref(false); // Show channels from all playlists
+    
+    // Stream sharing
+    const isSharing = ref(false);
+    const shareId = ref(null);
+    const currentStreamId = ref(null); // Track current transcoded stream ID
+    const guestCount = ref(0);
+    const guestNames = ref([]);
     
     // Transcoding settings
     const transcoderUrl = ref(defaultTranscoderUrl);
@@ -26,6 +34,11 @@ export const useAppStore = defineStore('app', () => {
     const hwDecoding = ref(true); // Use hardware decoding when available
     const transcodingPreset = ref('fast'); // ultrafast, superfast, veryfast, faster, fast, medium
     const transcodingQuality = ref('balanced'); // performance, balanced, quality
+    
+    // Custom domain/port/protocol for share URLs
+    const customDomain = ref('');
+    const customPort = ref('');
+    const customProtocol = ref('https'); // 'http' or 'https'
 
     // Load transcoding settings from localStorage
     function loadTranscodingSettings() {
@@ -39,6 +52,10 @@ export const useAppStore = defineStore('app', () => {
                 transcodingPreset.value = settings.transcodingPreset || 'fast';
                 transcodingQuality.value = settings.transcodingQuality || 'balanced';
                 useAllPlaylists.value = settings.useAllPlaylists || false;
+                customDomain.value = settings.customDomain || '';
+                customPort.value = settings.customPort || '';
+                customProtocol.value = settings.customProtocol || 'https';
+                customProtocol.value = settings.customProtocol || 'https';
             }
         } catch (err) {
             console.error('Error loading transcoding settings:', err);
@@ -54,7 +71,11 @@ export const useAppStore = defineStore('app', () => {
                 hwDecoding: hwDecoding.value,
                 transcodingPreset: transcodingPreset.value,
                 transcodingQuality: transcodingQuality.value,
-                useAllPlaylists: useAllPlaylists.value
+                useAllPlaylists: useAllPlaylists.value,
+                customDomain: customDomain.value,
+                customPort: customPort.value,
+                customProtocol: customProtocol.value,
+                customProtocol: customProtocol.value
             };
             localStorage.setItem(TRANSCODING_SETTINGS_KEY, JSON.stringify(settings));
         } catch (err) {
@@ -119,6 +140,37 @@ export const useAppStore = defineStore('app', () => {
         useAllPlaylists.value = value;
         saveTranscodingSettings();
     }
+    
+    function setCustomDomain(value) {
+        customDomain.value = value;
+    }
+    
+    function setCustomPort(value) {
+        customPort.value = value;
+    }
+    
+    function setCustomProtocol(value) {
+        customProtocol.value = value;
+    }
+
+    function startSharing(id) {
+        isSharing.value = true;
+        shareId.value = id;
+    }
+
+    function stopSharing() {
+        isSharing.value = false;
+        shareId.value = null;
+    }
+
+    function setCurrentStreamId(id) {
+        currentStreamId.value = id;
+    }
+
+    function setGuestInfo(count, names) {
+        guestCount.value = count;
+        guestNames.value = names || [];
+    }
 
     // Initialize settings
     loadTranscodingSettings();
@@ -152,5 +204,22 @@ export const useAppStore = defineStore('app', () => {
         setTranscodingQuality,
         useAllPlaylists,
         setUseAllPlaylists,
+        customDomain,
+        setCustomDomain,
+        customPort,
+        setCustomPort,
+        customProtocol,
+        setCustomProtocol,
+        saveTranscodingSettings,
+        // Stream sharing
+        isSharing,
+        shareId,
+        currentStreamId,
+        guestCount,
+        guestNames,
+        startSharing,
+        stopSharing,
+        setCurrentStreamId,
+        setGuestInfo,
     };
 });

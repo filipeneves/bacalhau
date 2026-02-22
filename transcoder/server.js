@@ -10,6 +10,11 @@ const { migrate } = require('./migrate');
 const app = express();
 const PORT = 3001;
 
+// Body parsers with increased limits for large M3U file uploads
+// MUST be configured before any other middleware that reads the body
+app.use(express.json({ limit: '200mb', strict: false }));
+app.use(express.urlencoded({ limit: '200mb', extended: true, parameterLimit: 100000 }));
+
 // Initialize database and migrate existing JSON files on startup
 db.initDatabase();
 migrate();
@@ -65,9 +70,6 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Authentication required', authEnabled: true });
 }
 
-// Auth endpoints
-app.use(express.json({ limit: '50mb' }));
-
 // Login endpoint
 app.post('/auth/login', (req, res) => {
     if (!AUTH_ENABLED) {
@@ -114,6 +116,10 @@ const activeStreams = new Map();
 
 // Store active recordings
 const activeRecordings = new Map();
+
+// Store shared streams
+const sharedStreams = new Map();
+// Structure: shareId -> { streamId, channelName, channelLogo, createdAt, guests: Set<guestName> }
 
 // HLS output directory
 const HLS_DIR = '/tmp/hls';
@@ -315,17 +321,6 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
     
     return args;
 }
-
-// CORS middleware
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-    }
-    next();
-});
 
 // Serve HLS files
 app.use('/hls', express.static(HLS_DIR, {
@@ -880,7 +875,7 @@ app.get('/playlists/:id', requireAuth, (req, res) => {
 });
 
 // Create new playlist
-app.post('/playlists', requireAuth, express.json({ limit: '50mb' }), (req, res) => {
+app.post('/playlists', requireAuth, (req, res) => {
     try {
         const { 
             name, channels, rawContent, url, epgUrl, xtream,
@@ -927,7 +922,7 @@ app.post('/playlists', requireAuth, express.json({ limit: '50mb' }), (req, res) 
 });
 
 // Update existing playlist
-app.put('/playlists/:id', requireAuth, express.json({ limit: '50mb' }), (req, res) => {
+app.put('/playlists/:id', requireAuth, (req, res) => {
     const { id } = req.params;
     
     try {
@@ -1017,6 +1012,9 @@ function cleanupStream(streamId) {
         }
 
         activeStreams.delete(streamId);
+        
+        // Clean up any shared streams using this stream
+        cleanupSharedStreams(streamId);
     }
 }
 
@@ -1042,6 +1040,183 @@ process.on('SIGINT', () => {
     }
     process.exit(0);
 });
+
+// ============================================================================
+// SHARED STREAMS ENDPOINTS
+// ============================================================================
+
+// Start sharing a stream
+app.post('/share/start', requireAuth, (req, res) => {
+    const { streamId, channelName, channelLogo } = req.body;
+    
+    if (!streamId) {
+        return res.status(400).json({ error: 'Missing streamId' });
+    }
+    
+    // Check if stream exists
+    if (!activeStreams.has(streamId)) {
+        return res.status(404).json({ error: 'Stream not found' });
+    }
+    
+    // Generate unique share ID
+    const shareId = uuidv4().split('-')[0]; // Use first segment for shorter URLs
+    
+    // Create shared stream entry
+    sharedStreams.set(shareId, {
+        streamId,
+        channelName: channelName || 'Shared Stream',
+        channelLogo: channelLogo || null,
+        createdAt: new Date().toISOString(),
+        guests: new Set()
+    });
+    
+    console.log(`[Share] Created share link ${shareId} for stream ${streamId}`);
+    
+    res.json({
+        shareId,
+        shareUrl: `/share/${shareId}`
+    });
+});
+
+// Update shared stream (when owner changes channels)
+app.put('/share/:shareId/update', requireAuth, (req, res) => {
+    const { shareId } = req.params;
+    const { streamId, channelName, channelLogo } = req.body;
+    
+    if (!sharedStreams.has(shareId)) {
+        return res.status(404).json({ error: 'Share not found' });
+    }
+    
+    const share = sharedStreams.get(shareId);
+    share.streamId = streamId;
+    share.channelName = channelName || share.channelName;
+    share.channelLogo = channelLogo || share.channelLogo;
+    share.updatedAt = new Date().toISOString();
+    
+    console.log(`[Share] Updated share ${shareId} to stream ${streamId}`);
+    
+    res.json({ success: true });
+});
+
+// Stop sharing a stream
+app.delete('/share/:shareId', requireAuth, (req, res) => {
+    const { shareId } = req.params;
+    
+    if (!sharedStreams.has(shareId)) {
+        return res.status(404).json({ error: 'Share not found' });
+    }
+    
+    const share = sharedStreams.get(shareId);
+    console.log(`[Share] Stopped sharing ${shareId}, had ${share.guests.size} guests`);
+    
+    sharedStreams.delete(shareId);
+    
+    res.json({ success: true });
+});
+
+// Get guest count for a shared stream
+app.get('/share/:shareId/guests', requireAuth, (req, res) => {
+    const { shareId } = req.params;
+    
+    if (!sharedStreams.has(shareId)) {
+        return res.status(404).json({ error: 'Share not found' });
+    }
+    
+    const share = sharedStreams.get(shareId);
+    res.json({
+        count: share.guests.size,
+        guests: Array.from(share.guests)
+    });
+});
+
+// Guest joins a shared stream
+app.post('/share/:shareId/join', (req, res) => {
+    const { shareId } = req.params;
+    const { guestName } = req.body;
+    
+    if (!sharedStreams.has(shareId)) {
+        return res.status(404).json({ error: 'Shared stream not found or no longer available' });
+    }
+    
+    const share = sharedStreams.get(shareId);
+    
+    // Check if the underlying stream is still active
+    if (!activeStreams.has(share.streamId)) {
+        // Stream is no longer active, clean up share
+        sharedStreams.delete(shareId);
+        return res.status(404).json({ error: 'Stream is no longer available' });
+    }
+    
+    // Add guest to the set
+    if (guestName) {
+        share.guests.add(guestName);
+        console.log(`[Share] Guest "${guestName}" joined share ${shareId}`);
+    }
+    
+    // Return stream information
+    res.json({
+        channelName: share.channelName,
+        channelLogo: share.channelLogo,
+        hlsUrl: `/hls/${share.streamId}/playlist.m3u8`,
+        streamId: share.streamId,
+        updatedAt: share.updatedAt || share.createdAt
+    });
+});
+
+// Guest leaves a shared stream
+app.post('/share/:shareId/leave', (req, res) => {
+    const { shareId } = req.params;
+    const { guestName } = req.body;
+    
+    if (sharedStreams.has(shareId)) {
+        const share = sharedStreams.get(shareId);
+        if (guestName) {
+            share.guests.delete(guestName);
+            console.log(`[Share] Guest "${guestName}" left share ${shareId}`);
+        }
+    }
+    
+    res.json({ success: true });
+});
+
+// Check if shared stream is still active
+app.get('/share/:shareId/status', (req, res) => {
+    const { shareId } = req.params;
+    
+    if (!sharedStreams.has(shareId)) {
+        return res.json({ active: false, reason: 'Share not found' });
+    }
+    
+    const share = sharedStreams.get(shareId);
+    
+    // Check if underlying stream is still active
+    if (!activeStreams.has(share.streamId)) {
+        // Clean up stale share
+        sharedStreams.delete(shareId);
+        return res.json({ active: false, reason: 'Stream ended' });
+    }
+    
+    res.json({
+        active: true,
+        channelName: share.channelName,
+        channelLogo: share.channelLogo,
+        streamId: share.streamId,
+        hlsUrl: `/hls/${share.streamId}/playlist.m3u8`,
+        updatedAt: share.updatedAt || share.createdAt,
+        guestCount: share.guests.size
+    });
+});
+
+// Clean up shared streams when underlying stream is stopped
+function cleanupSharedStreams(streamId) {
+    // Find and remove all shares for this stream
+    for (const [shareId, share] of sharedStreams.entries()) {
+        if (share.streamId === streamId) {
+            console.log(`[Share] Auto-cleaning up share ${shareId} due to stream ${streamId} ending`);
+            sharedStreams.delete(shareId);
+        }
+    }
+}
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Transcoder] Server running on port ${PORT}`);

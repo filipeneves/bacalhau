@@ -42,6 +42,54 @@
                                 persistent-hint
                                 color="primary"
                             ></v-switch>
+                            
+                            <v-divider class="my-4"></v-divider>
+                            
+                            <p class="text-subtitle-2 mb-3">
+                                <v-icon size="18" class="mr-1">mdi-share-variant</v-icon>
+                                Share URL Configuration
+                            </p>
+                            
+                            <v-select
+                                v-model="customProtocol"
+                                label="Protocol"
+                                :items="[{ title: 'HTTP', value: 'http' }, { title: 'HTTPS', value: 'https' }]"
+                                density="compact"
+                                class="mb-4"
+                            ></v-select>
+                            
+                            <v-text-field
+                                v-model="customDomain"
+                                label="Custom Domain (optional)"
+                                placeholder="example.com or 192.168.1.100"
+                                hint="Leave empty to use current browser location"
+                                persistent-hint
+                                density="compact"
+                                clearable
+                                class="mb-4"
+                            ></v-text-field>
+                            
+                            <v-text-field
+                                v-model="customPort"
+                                label="Custom Port (optional)"
+                                placeholder="8456"
+                                hint="Leave empty to use current browser port"
+                                persistent-hint
+                                density="compact"
+                                clearable
+                                class="mb-4"
+                            ></v-text-field>
+                            
+                            <v-btn
+                                color="primary"
+                                variant="elevated"
+                                @click="saveShareSettings"
+                                block
+                            >
+                                <v-icon class="mr-2">mdi-content-save</v-icon>
+                                Save Share Settings
+                            </v-btn>
+                            
                             <v-divider class="my-4"></v-divider>
                             <p class="text-caption text-grey">App Version: {{ version }}</p>
                         </div>
@@ -656,11 +704,21 @@ const currentCategory = computed(() => {
 // General settings
 const darkMode = ref(app.isDarkMode);
 const version = computed(() => app.version);
+const customDomain = ref(app.customDomain);
+const customPort = ref(app.customPort);
+const customProtocol = ref(app.customProtocol);
 
 watch(darkMode, (newVal) => {
     app.setDarkMode(newVal);
     theme.global.name.value = newVal ? 'dark' : 'light';
 });
+
+function saveShareSettings() {
+    app.setCustomDomain(customDomain.value);
+    app.setCustomPort(customPort.value);
+    app.setCustomProtocol(customProtocol.value);
+    app.saveTranscodingSettings();
+}
 
 // Playlist settings
 const useAllPlaylists = computed({

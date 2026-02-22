@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 import SetupView from '@/views/SetupView.vue';
 import MainView from '@/views/MainView.vue';
 import LoginView from '@/views/LoginView.vue';
+import GuestView from '@/views/GuestView.vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { getTranscoderUrl } from '@/services/urls.js';
 
@@ -27,6 +28,12 @@ const routes = [
         name: 'Player',
         component: MainView
     },
+    {
+        path: '/share/:shareId',
+        name: 'GuestStream',
+        component: GuestView,
+        meta: { guest: true }
+    },
 ];
 
 const router = createRouter({
@@ -50,6 +57,11 @@ async function checkAuth() {
 
 // Middlewares
 router.beforeEach(async (to, from, next) => {
+    // Guest routes don't require authentication or playlists
+    if (to.meta.guest) {
+        return next();
+    }
+    
     // Check authentication first (if enabled)
     const authStatus = await checkAuth();
     

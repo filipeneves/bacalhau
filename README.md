@@ -28,10 +28,12 @@
 
 ## Features
 
-- 📺 **M3U/M3U8 Playlist Support** - Import local files or URLs
+- 📺 **M3U/M3U8 Playlist Support** - Import local files or URLs (up to 200MB)
 - 🔗 **Xtream Codes API** - Connect to Xtream-compatible providers
 - 📖 **EPG Guide** - Electronic Program Guide with XMLTV support
 - 🎬 **Live Recording** - Record streams directly to your server
+- 🔗 **Stream Sharing** - Share live streams with guests via unique URLs
+- 👥 **Guest Viewer Tracking** - See who's watching your shared streams in real-time
 - ⚡ **GPU Transcoding** - Hardware-accelerated video encoding
 - 💾 **Persistent Playlists** - Playlists stored on disk, accessible from any device
 - 🎨 **Dark/Light Theme** - Customizable interface
