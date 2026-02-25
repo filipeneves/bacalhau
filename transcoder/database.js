@@ -399,9 +399,9 @@ function deleteSetting(key) {
 
 // ==================== SESSION STORE FOR EXPRESS-SESSION ====================
 
-const { EventEmitter } = require('events');
+const session = require('express-session');
 
-class SQLiteStore extends EventEmitter {
+class SQLiteStore extends session.Store {
     constructor() {
         super();
         this.db = getDatabase();
