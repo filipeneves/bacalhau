@@ -114,6 +114,7 @@ import { ref, computed, watch } from 'vue';
 import { useAppStore } from '@/stores/app';
 import { usePlaylistStore } from '@/stores/playlist';
 import { apiFetch } from '@/services/api';
+import { wsService } from '@/services/websocket.js';
 
 export default {
     name: 'ShareStreamDialog',
@@ -135,9 +136,8 @@ export default {
         const snackbar = ref(false);
         const snackbarText = ref('');
         const shareUrlField = ref(null);
-        const guestCount = ref(0);
-        const guestNames = computed(() => app.guestNames);
-        let guestCountInterval = null;
+        const guestCount = computed(() => wsService.guestCount.value);
+        const guestNames = computed(() => wsService.guestNames.value);
 
         const isSharing = computed(() => app.isSharing);
         const shareId = computed(() => app.shareId);
@@ -204,11 +204,16 @@ export default {
                 console.log('[Share] Success! ShareId:', data.shareId);
                 app.startSharing(data.shareId);
                 
+                // Connect to WebSocket room as admin
+                wsService.connect(data.shareId, app.adminName || 'Admin', 'admin');
+                
+                // Sync guest updates to app store
+                wsService.onGuestUpdate((count, names) => {
+                    app.setGuestInfo(count, names);
+                });
+                
                 snackbarText.value = 'Stream sharing started!';
                 snackbar.value = true;
-
-                // Start polling for guest count
-                startGuestCountPolling();
             } catch (err) {
                 console.error('[Share] Error starting share:', err);
                 snackbarText.value = `Failed to start sharing: ${err.message}`;
@@ -232,8 +237,7 @@ export default {
                 }
 
                 app.stopSharing();
-                stopGuestCountPolling();
-                guestCount.value = 0;
+                wsService.disconnect();
                 app.setGuestInfo(0, []);
                 
                 snackbarText.value = 'Stream sharing stopped';
@@ -268,48 +272,12 @@ export default {
             show.value = false;
         }
 
-        async function updateGuestCount() {
-            if (!shareId.value) return;
-
-            try {
-                const response = await apiFetch(`/share/${shareId.value}/guests`);
-                if (response.ok) {
-                    const data = await response.json();
-                    guestCount.value = data.count || 0;
-                    app.setGuestInfo(data.count || 0, data.guests || []);
-                }
-            } catch (err) {
-                console.error('Error fetching guest count:', err);
-            }
-        }
-
-        function startGuestCountPolling() {
-            stopGuestCountPolling();
-            updateGuestCount();
-            guestCountInterval = setInterval(updateGuestCount, 5000);
-        }
-
-        function stopGuestCountPolling() {
-            if (guestCountInterval) {
-                clearInterval(guestCountInterval);
-                guestCountInterval = null;
-            }
-        }
-
-        // Watch for dialog open/close
-        watch(show, (newVal) => {
-            if (newVal && isSharing.value) {
-                startGuestCountPolling();
-            } else if (!newVal) {
-                stopGuestCountPolling();
-            }
-        });
+        // Watch for dialog open/close - no polling needed, WebSocket handles updates
 
         // Clean up on unmount
         watch(() => isSharing.value, (newVal) => {
             if (!newVal) {
-                stopGuestCountPolling();
-                guestCount.value = 0;
+                wsService.disconnect();
             }
         });
 

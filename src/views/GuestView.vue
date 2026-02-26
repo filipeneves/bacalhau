@@ -38,7 +38,7 @@
                 </div>
                 <div v-else-if="loading" class="loading-container">
                     <v-progress-circular indeterminate size="64" color="primary"></v-progress-circular>
-                    <p class="mt-4">Loading stream...</p>
+                    <p class="mt-4">{{ channelName ? `Switching to ${channelName}...` : 'Loading stream...' }}</p>
                 </div>
                 <div v-else class="video-wrapper">
                     <video ref="videoElement" v-if="hlsUrl" 
@@ -47,6 +47,13 @@
                         @error="handleVideoError"
                         @loadstart="handleLoadStart"
                         @canplay="handleCanPlay"></video>
+                    
+                    <!-- Danmaku overlay -->
+                    <DanmakuOverlay
+                        ref="danmakuRef"
+                        :isMobile="isMobile"
+                        @send="handleDanmakuSend"
+                    />
                 </div>
             </div>
         </v-main>
@@ -90,10 +97,13 @@ import { ref, onMounted, onBeforeUnmount, computed, nextTick } from 'vue';
 import { useRoute } from 'vue-router';
 import { apiFetch } from '@/services/api';
 import { getTranscoderUrl } from '@/services/urls.js';
+import { wsService } from '@/services/websocket.js';
+import DanmakuOverlay from '@/components/DanmakuOverlay.vue';
 import Hls from 'hls.js';
 
 export default {
     name: 'GuestView',
+    components: { DanmakuOverlay },
     
     setup() {
         const route = useRoute();
@@ -113,11 +123,17 @@ export default {
         const channelLogo = ref('');
         const hlsUrl = ref('');
         const currentStreamId = ref('');
-        const lastUpdatedAt = ref('');
         
         const videoElement = ref(null);
+        const danmakuRef = ref(null);
         let hlsInstance = null;
-        let healthCheckInterval = null;
+
+        const isMobile = ref(false);
+
+        function checkMobile() {
+            isMobile.value = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
+                || window.innerWidth <= 768;
+        }
 
         async function submitName() {
             if (!guestNameInput.value.trim()) {
@@ -137,7 +153,7 @@ export default {
             error.value = false;
             
             try {
-                // Register as a guest
+                // Register as a guest via REST (initial join, get stream info)
                 const response = await apiFetch(`/share/${shareId.value}/join`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -156,7 +172,6 @@ export default {
                 channelName.value = data.channelName || 'Shared Stream';
                 channelLogo.value = data.channelLogo || '';
                 currentStreamId.value = data.streamId;
-                lastUpdatedAt.value = data.updatedAt;
                 
                 // Construct full HLS URL using the transcoder URL
                 const relativeHlsUrl = data.hlsUrl;
@@ -165,27 +180,93 @@ export default {
                     : `${transcoderUrl}${relativeHlsUrl}`;
                 
                 console.log('[Guest] HLS URL:', hlsUrl.value);
-                console.log('[Guest] Stream ID:', currentStreamId.value);
                 
                 // Set loading to false so the video element renders
                 loading.value = false;
                 
                 // Wait for Vue to render the video element
                 await nextTick();
-                
-                console.log('[Guest] Video element after nextTick:', videoElement.value);
 
                 // Initialize video player
                 await initializePlayer();
                 
-                // Start health check
-                startHealthCheck();
+                // Connect to WebSocket room as guest
+                connectWebSocket();
             } catch (err) {
                 console.error('[Error joining stream:', err);
                 error.value = true;
                 errorMessage.value = err.message || 'Failed to connect to stream. Please check the URL and try again.';
                 loading.value = false;
             }
+        }
+
+        let isChangingChannel = false; // Track channel transition state
+
+        function connectWebSocket() {
+            // Register WebSocket event handlers BEFORE connecting
+            wsService.onChannelChange(async (msg) => {
+                console.log('[Guest] Channel changed via WebSocket:', msg.channelName);
+                isChangingChannel = true;
+                
+                // Show loading state immediately
+                loading.value = true;
+                error.value = false;
+                
+                // Destroy existing player right away
+                if (hlsInstance) {
+                    hlsInstance.destroy();
+                    hlsInstance = null;
+                }
+                
+                // Update channel info
+                channelName.value = msg.channelName || 'Shared Stream';
+                channelLogo.value = msg.channelLogo || '';
+                currentStreamId.value = msg.streamId;
+                
+                // Construct new HLS URL
+                const relativeHlsUrl = msg.hlsUrl;
+                const newHlsUrl = relativeHlsUrl.startsWith('http') 
+                    ? relativeHlsUrl 
+                    : `${transcoderUrl}${relativeHlsUrl}`;
+                
+                hlsUrl.value = newHlsUrl;
+                
+                // Wait for the HLS playlist to become available before loading
+                try {
+                    await waitForStream(newHlsUrl);
+                    loading.value = false;
+                    await nextTick();
+                    await initializePlayer();
+                } catch (err) {
+                    console.error('[Guest] Failed to load new stream:', err);
+                    error.value = true;
+                    errorMessage.value = 'Failed to load the new channel. The stream may not be ready yet.';
+                    loading.value = false;
+                } finally {
+                    isChangingChannel = false;
+                }
+            });
+
+            wsService.onDanmaku((msg) => {
+                if (danmakuRef.value) {
+                    danmakuRef.value.addMessage(msg);
+                }
+            });
+
+            wsService.onShareStopped(() => {
+                console.log('[Guest] Share stopped by owner');
+                error.value = true;
+                errorMessage.value = 'The owner has stopped sharing this stream.';
+                
+                // Clean up player
+                if (hlsInstance) {
+                    hlsInstance.destroy();
+                    hlsInstance = null;
+                }
+            });
+
+            // Connect to WebSocket
+            wsService.connect(shareId.value, guestName.value, 'guest');
         }
 
         async function initializePlayer() {
@@ -215,15 +296,31 @@ export default {
                 
                 console.log('[Guest] HLS instance created and attached');
 
+                let networkRetries = 0;
+                const MAX_NETWORK_RETRIES = 5;
+
                 hlsInstance.on(Hls.Events.ERROR, (event, data) => {
                     console.error('[Guest] HLS error:', event, data);
                     if (data.fatal) {
+                        // If we're in the middle of a channel switch, ignore errors
+                        if (isChangingChannel) {
+                            console.log('[Guest] Ignoring HLS error during channel transition');
+                            return;
+                        }
                         console.error('HLS fatal error:', data);
                         switch (data.type) {
                             case Hls.ErrorTypes.NETWORK_ERROR:
-                                // Try to recover
-                                console.log('Attempting to recover from network error...');
-                                hlsInstance.startLoad();
+                                networkRetries++;
+                                if (networkRetries <= MAX_NETWORK_RETRIES) {
+                                    console.log(`[Guest] Recovering from network error (attempt ${networkRetries}/${MAX_NETWORK_RETRIES})...`);
+                                    setTimeout(() => {
+                                        if (hlsInstance) hlsInstance.startLoad();
+                                    }, 1000 * networkRetries); // Progressive backoff
+                                } else {
+                                    console.error('[Guest] Max network retries exceeded');
+                                    error.value = true;
+                                    errorMessage.value = 'Lost connection to the stream. The owner may have changed channels or stopped sharing.';
+                                }
                                 break;
                             case Hls.ErrorTypes.MEDIA_ERROR:
                                 console.log('Attempting to recover from media error...');
@@ -232,10 +329,15 @@ export default {
                             default:
                                 error.value = true;
                                 errorMessage.value = 'Stream playback error. The stream may have ended.';
-                                stopHealthCheck();
                                 break;
                         }
                     }
+                });
+
+                // Reset network retries on successful manifest load
+                hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                    networkRetries = 0;
+                    console.log('[Guest] Manifest loaded successfully');
                 });
             } else if (videoElement.value.canPlayType('application/vnd.apple.mpegurl')) {
                 // Native HLS support (Safari)
@@ -246,70 +348,31 @@ export default {
             }
         }
 
-        async function checkStreamHealth() {
-            try {
-                const response = await apiFetch(`/share/${shareId.value}/status`);
-                
-                if (!response.ok) {
-                    throw new Error('Stream is offline');
+        /**
+         * Poll the HLS playlist URL until it returns a 200 response,
+         * meaning the transcoder has produced segments and is ready.
+         */
+        async function waitForStream(url, maxWait = 25000, interval = 1000) {
+            const start = Date.now();
+            while (Date.now() - start < maxWait) {
+                try {
+                    const resp = await fetch(url, { method: 'HEAD' });
+                    if (resp.ok) {
+                        console.log('[Guest] Stream is ready:', url);
+                        return;
+                    }
+                } catch (e) {
+                    // fetch failed (CORS, network), keep retrying
                 }
-                
-                const data = await response.json();
-                if (!data.active) {
-                    throw new Error('The owner has stopped sharing this stream.');
-                }
-                
-                // Check if the channel/stream has changed
-                if (data.streamId !== currentStreamId.value) {
-                    console.log('[Guest] Channel changed! Reloading stream...');
-                    console.log('[Guest] Old stream:', currentStreamId.value);
-                    console.log('[Guest] New stream:', data.streamId);
-                    
-                    // Update channel info
-                    channelName.value = data.channelName || 'Shared Stream';
-                    channelLogo.value = data.channelLogo || '';
-                    currentStreamId.value = data.streamId;
-                    lastUpdatedAt.value = data.updatedAt;
-                    
-                    // Construct new HLS URL
-                    const relativeHlsUrl = data.hlsUrl;
-                    const newHlsUrl = relativeHlsUrl.startsWith('http') 
-                        ? relativeHlsUrl 
-                        : `${transcoderUrl}${relativeHlsUrl}`;
-                    
-                    // Reload the player with new stream
-                    hlsUrl.value = newHlsUrl;
-                    await reloadPlayer();
-                }
-            } catch (err) {
-                console.error('[Guest] Stream health check failed:', err);
-                error.value = true;
-                errorMessage.value = err.message || 'The stream is no longer available.';
-                stopHealthCheck();
-                
-                // Clean up video player
-                if (hlsInstance) {
-                    hlsInstance.destroy();
-                    hlsInstance = null;
-                }
+                await new Promise(resolve => setTimeout(resolve, interval));
             }
-        }
-
-        function startHealthCheck() {
-            stopHealthCheck();
-            // Check every 10 seconds
-            healthCheckInterval = setInterval(checkStreamHealth, 10000);
-        }
-
-        function stopHealthCheck() {
-            if (healthCheckInterval) {
-                clearInterval(healthCheckInterval);
-                healthCheckInterval = null;
-            }
+            throw new Error('Timeout waiting for stream to become available');
         }
         
         async function reloadPlayer() {
             console.log('[Guest] Reloading player with new stream');
+            loading.value = true;
+            error.value = false;
             
             // Destroy existing player
             if (hlsInstance) {
@@ -317,16 +380,27 @@ export default {
                 hlsInstance = null;
             }
             
-            // Wait a moment for cleanup
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // Wait for DOM update and for the stream to be available
+            await nextTick();
+            try {
+                await waitForStream(hlsUrl.value);
+            } catch (e) {
+                console.warn('[Guest] Stream not ready after timeout, trying anyway...');
+            }
+            
+            loading.value = false;
+            await nextTick();
             
             // Reinitialize player
             await initializePlayer();
         }
 
+        function handleDanmakuSend({ text, color }) {
+            wsService.sendDanmaku(text, color);
+        }
+
         function handleVideoError(event) {
             console.error('Video error:', event);
-            // Health check will handle showing the error
         }
 
         function handleLoadStart() {
@@ -338,42 +412,21 @@ export default {
             loading.value = false;
         }
 
-        // Notify server when guest leaves
-        function notifyLeave() {
-            if (shareId.value && guestName.value) {
-                // Use sendBeacon for more reliable delivery when page is unloading
-                const url = `${getTranscoderUrl()}/share/${shareId.value}/leave`;
-                const data = JSON.stringify({ guestName: guestName.value });
-                
-                if (navigator.sendBeacon) {
-                    const blob = new Blob([data], { type: 'application/json' });
-                    navigator.sendBeacon(url, blob);
-                } else {
-                    // Fallback to regular fetch
-                    apiFetch(`/share/${shareId.value}/leave`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: data
-                    }).catch(err => console.error('Error notifying leave:', err));
-                }
-            }
-        }
-
-        // Add beforeunload listener for more reliable cleanup
         onMounted(() => {
-            window.addEventListener('beforeunload', notifyLeave);
+            checkMobile();
+            window.addEventListener('resize', checkMobile);
         });
 
         onBeforeUnmount(() => {
-            window.removeEventListener('beforeunload', notifyLeave);
-            stopHealthCheck();
+            window.removeEventListener('resize', checkMobile);
+            
+            // Disconnect WebSocket (automatically removes guest from room)
+            wsService.disconnect();
+            
             if (hlsInstance) {
                 hlsInstance.destroy();
                 hlsInstance = null;
             }
-            
-            // Notify server that guest is leaving
-            notifyLeave();
         });
 
         return {
@@ -389,7 +442,10 @@ export default {
             channelLogo,
             hlsUrl,
             videoElement,
+            danmakuRef,
+            isMobile,
             submitName,
+            handleDanmakuSend,
             handleVideoError,
             handleLoadStart,
             handleCanPlay
@@ -427,6 +483,7 @@ export default {
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
 }
 
 .video-player {

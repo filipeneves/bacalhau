@@ -80,6 +80,23 @@
                                 class="mb-4"
                             ></v-text-field>
                             
+                            <v-divider class="my-4"></v-divider>
+                            
+                            <p class="text-subtitle-2 mb-3">
+                                <v-icon size="18" class="mr-1">mdi-message-text</v-icon>
+                                Danmaku Settings
+                            </p>
+                            
+                            <v-text-field
+                                v-model="adminName"
+                                label="Display Name"
+                                placeholder="Admin"
+                                hint="Your name shown on danmaku messages when sharing"
+                                persistent-hint
+                                density="compact"
+                                class="mb-4"
+                            ></v-text-field>
+                            
                             <v-btn
                                 color="primary"
                                 variant="elevated"
@@ -707,6 +724,7 @@ const version = computed(() => app.version);
 const customDomain = ref(app.customDomain);
 const customPort = ref(app.customPort);
 const customProtocol = ref(app.customProtocol);
+const adminName = ref(app.adminName);
 
 watch(darkMode, (newVal) => {
     app.setDarkMode(newVal);
@@ -717,6 +735,7 @@ function saveShareSettings() {
     app.setCustomDomain(customDomain.value);
     app.setCustomPort(customPort.value);
     app.setCustomProtocol(customProtocol.value);
+    app.setAdminName(adminName.value);
     app.saveTranscodingSettings();
 }
 

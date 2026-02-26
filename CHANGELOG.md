@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-02-26
+
+### Added
+- **WebSocket-Powered Stream Sharing**: Replaced HTTP polling with WebSockets for real-time communication
+  - Instant channel switching for all connected guests when the admin changes channels
+  - Real-time guest count and viewer list updates without polling delays
+  - Automatic reconnection on connection drops
+  - Guests are immediately notified when the owner stops sharing
+- **Danmaku (Live Comments)**: Bilibili-style floating messages over the video player
+  - Both admin and guests can send messages that scroll across the video
+  - Custom color picker for message colors
+  - Toggle button in the player controls (mobile-friendly placement)
+  - Messages limited to 200 characters with text shadow for readability
+  - Auto-distributed across vertical tracks to avoid overlapping
+- **Admin Display Name**: Configurable display name for danmaku messages in Settings → Danmaku Settings
+
+### Fixed
+- Channel switching not propagating to guests in shared streams (was relying on 10-second polling)
+- Guest viewer count glitchy and inaccurate (was using REST polling, now uses WebSocket presence)
+- Guests not reliably removed from viewer list when disconnecting
+- Guest stream going offline when admin switches channels (now uses `waitForStream` polling with loading state)
+- WebSocket disconnecting guests on channel switch (cleanupSharedStreams now checks if admin is still connected)
+
+### Changed
+- Guest tracking now uses WebSocket connections instead of REST API polling
+- Channel changes in shared streams are now instant via WebSocket instead of 10-second polling detection
+- Nginx configuration updated with dedicated WebSocket proxy endpoint
+
 ## [1.0.5] - 2026-02-25
 
 ### Fixed
