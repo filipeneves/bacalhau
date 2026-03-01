@@ -36,3 +36,12 @@ export function getProxyUrl() {
   
   return 'http://localhost:8888';
 }
+
+export function getWebSocketUrl() {
+  if (typeof window !== 'undefined' && import.meta.env.PROD) {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${wsProtocol}//${window.location.host}/ws`;
+  }
+  // Development mode - direct connection to transcoder WS
+  return 'ws://localhost:3001/ws';
+}

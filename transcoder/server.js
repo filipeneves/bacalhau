@@ -1,5 +1,7 @@
 const express = require('express');
 const session = require('express-session');
+const http = require('http');
+const { WebSocketServer } = require('ws');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -8,6 +10,7 @@ const db = require('./database');
 const { migrate } = require('./migrate');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = 3001;
 
 // Body parsers with increased limits for large M3U file uploads
@@ -1111,6 +1114,9 @@ app.delete('/share/:shareId', requireAuth, (req, res) => {
     
     sharedStreams.delete(shareId);
     
+    // Notify all WebSocket clients that the share has stopped
+    notifyShareStopped(shareId);
+    
     res.json({ success: true });
 });
 
@@ -1212,13 +1218,187 @@ function cleanupSharedStreams(streamId) {
     // Find and remove all shares for this stream
     for (const [shareId, share] of sharedStreams.entries()) {
         if (share.streamId === streamId) {
-            console.log(`[Share] Auto-cleaning up share ${shareId} due to stream ${streamId} ending`);
-            sharedStreams.delete(shareId);
+            // Check if an admin is still connected in the WS room.
+            // If so, they're just switching channels — don't nuke the share.
+            const room = wsRooms.get(shareId);
+            const adminStillConnected = room && Array.from(room).some(c => c.isAdmin && c.ws.readyState === 1);
+            
+            if (adminStillConnected) {
+                console.log(`[Share] Stream ${streamId} ended but admin still connected in room ${shareId} — keeping share alive (channel switch)`);
+            } else {
+                console.log(`[Share] Auto-cleaning up share ${shareId} due to stream ${streamId} ending`);
+                sharedStreams.delete(shareId);
+                notifyShareStopped(shareId);
+            }
         }
     }
 }
 
-app.listen(PORT, '0.0.0.0', () => {
+// ============================================================================
+// WEBSOCKET SERVER
+// ============================================================================
+
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+// Map shareId -> Set of { ws, guestName, isAdmin }
+const wsRooms = new Map();
+
+function broadcastToRoom(shareId, message, excludeWs = null) {
+    const room = wsRooms.get(shareId);
+    if (!room) return;
+    const data = JSON.stringify(message);
+    for (const client of room) {
+        if (client.ws !== excludeWs && client.ws.readyState === 1) { // WebSocket.OPEN
+            client.ws.send(data);
+        }
+    }
+}
+
+function getRoomGuestList(shareId) {
+    const room = wsRooms.get(shareId);
+    if (!room) return { count: 0, guests: [] };
+    const guests = [];
+    for (const client of room) {
+        if (client.guestName) {
+            guests.push(client.guestName);
+        }
+    }
+    return { count: guests.length, guests };
+}
+
+function broadcastGuestUpdate(shareId) {
+    const info = getRoomGuestList(shareId);
+    broadcastToRoom(shareId, {
+        type: 'guest-update',
+        count: info.count,
+        guests: info.guests
+    });
+    // Also update the sharedStreams Map for REST API compatibility
+    const share = sharedStreams.get(shareId);
+    if (share) {
+        share.guests = new Set(info.guests);
+    }
+}
+
+wss.on('connection', (ws, req) => {
+    // Parse shareId from query string: /ws?shareId=xxx&name=yyy&role=admin|guest
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const shareId = url.searchParams.get('shareId');
+    const guestName = url.searchParams.get('name') || 'Anonymous';
+    const role = url.searchParams.get('role') || 'guest';
+    const isAdmin = role === 'admin';
+
+    if (!shareId) {
+        ws.close(4000, 'Missing shareId');
+        return;
+    }
+
+    // Verify share exists
+    if (!sharedStreams.has(shareId)) {
+        ws.close(4001, 'Share not found');
+        return;
+    }
+
+    // Add to room
+    if (!wsRooms.has(shareId)) {
+        wsRooms.set(shareId, new Set());
+    }
+    const client = { ws, guestName, isAdmin };
+    wsRooms.get(shareId).add(client);
+
+    console.log(`[WS] ${isAdmin ? 'Admin' : 'Guest'} "${guestName}" connected to room ${shareId}`);
+
+    // Broadcast updated guest list
+    broadcastGuestUpdate(shareId);
+
+    // Send current share state to the newly connected client
+    const share = sharedStreams.get(shareId);
+    if (share) {
+        ws.send(JSON.stringify({
+            type: 'share-state',
+            streamId: share.streamId,
+            channelName: share.channelName,
+            channelLogo: share.channelLogo,
+            hlsUrl: `/hls/${share.streamId}/playlist.m3u8`
+        }));
+    }
+
+    ws.on('message', (raw) => {
+        try {
+            const msg = JSON.parse(raw);
+
+            switch (msg.type) {
+                case 'channel-change': {
+                    // Only admin can change channels
+                    if (!isAdmin) break;
+                    const s = sharedStreams.get(shareId);
+                    if (s) {
+                        s.streamId = msg.streamId;
+                        s.channelName = msg.channelName || s.channelName;
+                        s.channelLogo = msg.channelLogo || s.channelLogo;
+                        s.updatedAt = new Date().toISOString();
+                        console.log(`[WS] Admin changed channel in room ${shareId} to ${msg.channelName}`);
+                        // Notify all clients (including admin for confirmation)
+                        broadcastToRoom(shareId, {
+                            type: 'channel-change',
+                            streamId: msg.streamId,
+                            channelName: msg.channelName,
+                            channelLogo: msg.channelLogo,
+                            hlsUrl: `/hls/${msg.streamId}/playlist.m3u8`
+                        });
+                    }
+                    break;
+                }
+                case 'danmaku': {
+                    // Relay danmaku message to all clients in the room
+                    broadcastToRoom(shareId, {
+                        type: 'danmaku',
+                        text: (msg.text || '').slice(0, 200), // Limit message length
+                        sender: guestName,
+                        color: msg.color || '#FFFFFF',
+                        id: uuidv4().split('-')[0]
+                    });
+                    break;
+                }
+            }
+        } catch (err) {
+            console.error('[WS] Error processing message:', err);
+        }
+    });
+
+    ws.on('close', () => {
+        console.log(`[WS] ${isAdmin ? 'Admin' : 'Guest'} "${guestName}" disconnected from room ${shareId}`);
+        const room = wsRooms.get(shareId);
+        if (room) {
+            room.delete(client);
+            if (room.size === 0) {
+                wsRooms.delete(shareId);
+            } else {
+                broadcastGuestUpdate(shareId);
+            }
+        }
+    });
+
+    ws.on('error', (err) => {
+        console.error(`[WS] Error for "${guestName}" in room ${shareId}:`, err.message);
+    });
+});
+
+// Helper: notify WS room when share is deleted
+function notifyShareStopped(shareId) {
+    broadcastToRoom(shareId, { type: 'share-stopped' });
+    // Close all connections in the room
+    const room = wsRooms.get(shareId);
+    if (room) {
+        for (const client of room) {
+            client.ws.close(4002, 'Share stopped');
+        }
+        wsRooms.delete(shareId);
+    }
+}
+
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`[Transcoder] Server running on port ${PORT}`);
+    console.log(`[Transcoder] WebSocket server running on ws://0.0.0.0:${PORT}/ws`);
     console.log(`[Transcoder] Recordings directory: ${RECORDINGS_DIR}`);
 });

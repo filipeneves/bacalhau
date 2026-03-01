@@ -39,6 +39,7 @@ export const useAppStore = defineStore('app', () => {
     const customDomain = ref('');
     const customPort = ref('');
     const customProtocol = ref('https'); // 'http' or 'https'
+    const adminName = ref('Admin'); // Display name for danmaku messages
 
     // Load transcoding settings from localStorage
     function loadTranscodingSettings() {
@@ -55,7 +56,7 @@ export const useAppStore = defineStore('app', () => {
                 customDomain.value = settings.customDomain || '';
                 customPort.value = settings.customPort || '';
                 customProtocol.value = settings.customProtocol || 'https';
-                customProtocol.value = settings.customProtocol || 'https';
+                adminName.value = settings.adminName || 'Admin';
             }
         } catch (err) {
             console.error('Error loading transcoding settings:', err);
@@ -75,7 +76,7 @@ export const useAppStore = defineStore('app', () => {
                 customDomain: customDomain.value,
                 customPort: customPort.value,
                 customProtocol: customProtocol.value,
-                customProtocol: customProtocol.value
+                adminName: adminName.value
             };
             localStorage.setItem(TRANSCODING_SETTINGS_KEY, JSON.stringify(settings));
         } catch (err) {
@@ -153,6 +154,10 @@ export const useAppStore = defineStore('app', () => {
         customProtocol.value = value;
     }
 
+    function setAdminName(value) {
+        adminName.value = value || 'Admin';
+    }
+
     function startSharing(id) {
         isSharing.value = true;
         shareId.value = id;
@@ -210,6 +215,8 @@ export const useAppStore = defineStore('app', () => {
         setCustomPort,
         customProtocol,
         setCustomProtocol,
+        adminName,
+        setAdminName,
         saveTranscodingSettings,
         // Stream sharing
         isSharing,

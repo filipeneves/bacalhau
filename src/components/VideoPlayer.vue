@@ -7,6 +7,14 @@
                     class="video-player" :class="{ 'live-stream': isLiveStream }"
                     @click="togglePlay"></video>
                 
+                <!-- Danmaku overlay (only when sharing) -->
+                <DanmakuOverlay
+                    v-if="isSharing"
+                    ref="danmakuRef"
+                    :isMobile="false"
+                    @send="handleDanmakuSend"
+                />
+                
                 <!-- Custom controls for live streams (no seek bar) -->
                 <div v-if="isLiveStream" class="custom-controls" :class="{ 'visible': controlsVisible }">
                     <div class="controls-left">
@@ -36,16 +44,20 @@ import { ref, onMounted, watch, computed, onBeforeUnmount, nextTick } from 'vue'
 import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
 import { getTranscoderUrl, getProxyUrl as getProxyUrlBase } from '@/services/urls.js';
+import { wsService } from '@/services/websocket.js';
+import DanmakuOverlay from './DanmakuOverlay.vue';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
 
 export default {
     name: 'VideoPlayer',
+    components: { DanmakuOverlay },
     emits: ['toggle-fullscreen'],
 
     setup(props, { emit }) {
         const videoElement = ref(null);
         const containerElement = ref(null);
+        const danmakuRef = ref(null);
         const videoKey = ref(Date.now());
         const playlist = usePlaylistStore();
         const app = useAppStore();
@@ -53,6 +65,7 @@ export default {
         const currentChannel = computed(() => playlist.currentChannel);
         const isPiP = computed(() => app.isPiP);
         const isRecording = computed(() => app.isRecording);
+        const isSharing = computed(() => app.isSharing);
         const isFullscreen = ref(false);
         const isLiveStream = ref(true); // Assume live by default, will be updated when playing
         const isPlaying = ref(false);
@@ -117,23 +130,14 @@ export default {
                 app.setCurrentStreamId(data.streamId); // Store in app state for sharing
                 app.setRecordingSupported(true); // Recording is available with transcoded stream
                 
-                // If sharing is active, update the shared stream with new channel info
+                // If sharing is active, notify guests via WebSocket about channel change
                 if (app.isSharing && app.shareId) {
-                    try {
-                        await fetch(`${transcoderUrl}/share/${app.shareId}/update`, {
-                            method: 'PUT',
-                            credentials: 'include',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                streamId: data.streamId,
-                                channelName: currentChannel.value?.name,
-                                channelLogo: currentChannel.value?.tvg?.logo || null
-                            })
-                        });
-                        console.log('[Share] Updated shared stream with new channel');
-                    } catch (err) {
-                        console.warn('[Share] Failed to update shared stream:', err);
-                    }
+                    wsService.sendChannelChange(
+                        data.streamId,
+                        currentChannel.value?.name,
+                        currentChannel.value?.tvg?.logo || null
+                    );
+                    console.log('[Share] Notified guests of channel change via WebSocket');
                 }
                 
                 return `${transcoderUrl}${data.hlsUrl}`;
@@ -187,6 +191,13 @@ export default {
             
             // Add beforeunload handler to stop recording when browser closes
             window.addEventListener('beforeunload', handleBeforeUnload);
+            
+            // Register WebSocket danmaku handler
+            wsService.onDanmaku((msg) => {
+                if (danmakuRef.value) {
+                    danmakuRef.value.addMessage(msg);
+                }
+            });
             
             // Check PiP support and update store
             const checkPipSupport = () => {
@@ -670,17 +681,25 @@ export default {
             return 'application/octet-stream';
         }
 
+        // Handle sending danmaku messages from the overlay
+        function handleDanmakuSend({ text, color }) {
+            wsService.sendDanmaku(text, color);
+        }
+
         return {
             videoElement,
             containerElement,
+            danmakuRef,
             isFullscreen,
             isLiveStream,
+            isSharing,
             isPlaying,
             isMuted,
             volume,
             controlsVisible,
             toggleFullscreen,
             videoKey,
+            handleDanmakuSend,
             play: () => videoElement.value?.play(),
             pause: () => videoElement.value?.pause(),
             togglePlay: () => {
