@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2026-03-03
+
+### Added
+- **Chromecast Support**: Cast any live stream to a Chromecast device
+  - Cast button appears in player controls and app bar when a Chromecast is detected
+  - Uses Google's Default Media Receiver (no registration required for users)
+  - Streams HLS content directly to the Chromecast
+  - Click the cast-connected icon to stop casting
+- **AirPlay Support**: Cast to Apple TV and AirPlay-compatible devices
+  - AirPlay button appears in player controls and app bar on Safari/iOS
+  - Native WebKit integration with `webkitShowPlaybackTargetPicker`
+  - Works with both admin and guest views
+
+### Fixed
+- **Playlist URL Import Broken**: Importing a playlist from a URL was routing through a client-side CORS proxy (`http://<domain>:8888/...`), which failed with mixed-content errors on HTTPS and when port 8888 wasn't reachable through the custom domain
+  - Playlist URL fetching now happens server-side via a new `/playlists/fetch-url` backend endpoint
+  - Eliminates CORS and mixed-content issues entirely
+- **CORS Proxy URL in Production**: `getProxyUrl()` now routes through nginx (`/proxy`) in production instead of hardcoding `http://<hostname>:8888`
+- **Nginx Proxy for CORS**: Added `/proxy/` location block in nginx config to forward requests to the CORS proxy container
+
 ## [1.0.6] - 2026-02-26
 
 ### Added

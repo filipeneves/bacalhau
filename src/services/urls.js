@@ -27,13 +27,13 @@ export function getProxyUrl() {
     return envUrl;
   }
   
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      return `http://${hostname}:8888`;
-    }
+  // In production, route through nginx proxy endpoint (same domain/port/protocol)
+  if (typeof window !== 'undefined' && import.meta.env.PROD) {
+    const baseUrl = `${window.location.protocol}//${window.location.host}`;
+    return `${baseUrl}/proxy`;
   }
   
+  // Development mode - direct connection to CORS proxy
   return 'http://localhost:8888';
 }
 

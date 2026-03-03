@@ -176,7 +176,7 @@ import { ref, computed, watch } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useEpgStore } from '@/stores/epg';
 import { fetchAndConvertToM3U } from '@/services/xtream';
-import { getProxyUrl } from '@/services/urls.js';
+import { apiFetch } from '@/services/api';
 
 const model = defineModel({ type: Boolean, default: false });
 
@@ -218,15 +218,19 @@ async function importFromUrl() {
     successMessage.value = '';
     
     try {
-        // Use the CORS proxy for external URLs
-        const proxyUrl = `${getProxyUrl()}/${playlistUrl.value}`;
-        const response = await fetch(proxyUrl);
+        // Fetch playlist via backend to avoid CORS/mixed-content issues
+        const response = await apiFetch('/playlists/fetch-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: playlistUrl.value })
+        });
         
         if (!response.ok) {
-            throw new Error(`Failed to fetch playlist: ${response.status} ${response.statusText}`);
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || `Failed to fetch playlist: ${response.status} ${response.statusText}`);
         }
         
-        const content = await response.text();
+        const { content } = await response.json();
         
         if (!content.includes('#EXTM3U')) {
             throw new Error('Invalid playlist format. File must be a valid M3U/M3U8 playlist.');

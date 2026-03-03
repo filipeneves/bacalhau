@@ -43,6 +43,7 @@
                 <div v-else class="video-wrapper">
                     <video ref="videoElement" v-if="hlsUrl" 
                         controls autoplay
+                        x-webkit-airplay="allow"
                         class="video-player"
                         @error="handleVideoError"
                         @loadstart="handleLoadStart"
