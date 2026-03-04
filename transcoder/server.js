@@ -229,9 +229,13 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
     );
     
     // Video encoding options based on acceleration type
+    // Deinterlace (yadif) and force yuv420p for Chromium MSE compatibility
+    // Chromium's MSE does not support interlaced H.264 or non-yuv420p pixel formats
     switch (hwAccel) {
         case 'nvenc':
             args.push(
+                '-vf', 'yadif',
+                '-pix_fmt', 'yuv420p',
                 '-c:v', 'h264_nvenc',
                 '-preset', nvencPresetMap[preset] || 'p5',
                 '-tune', 'ull',  // Ultra low latency
@@ -245,6 +249,8 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             
         case 'qsv':
             args.push(
+                '-vf', 'yadif',
+                '-pix_fmt', 'yuv420p',
                 '-c:v', 'h264_qsv',
                 '-preset', preset === 'ultrafast' ? 'veryfast' : preset,
                 '-global_quality', String(qSettings.crf + 5),
@@ -256,10 +262,11 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             
         case 'vaapi':
             // VAAPI needs format conversion if hwaccel output format is vaapi
+            // Prepend yadif for deinterlacing
             if (hwDecode) {
-                args.push('-vf', 'format=nv12|vaapi,hwupload');
+                args.push('-vf', 'yadif,format=nv12|vaapi,hwupload');
             } else {
-                args.push('-vf', 'format=nv12,hwupload');
+                args.push('-vf', 'yadif,format=nv12,hwupload');
             }
             args.push(
                 '-c:v', 'h264_vaapi',
@@ -272,6 +279,8 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             
         case 'amf':
             args.push(
+                '-vf', 'yadif',
+                '-pix_fmt', 'yuv420p',
                 '-c:v', 'h264_amf',
                 '-quality', quality === 'quality' ? 'quality' : (quality === 'performance' ? 'speed' : 'balanced'),
                 '-rc', 'vbr_latency',
@@ -285,6 +294,8 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             
         case 'videotoolbox':
             args.push(
+                '-vf', 'yadif',
+                '-pix_fmt', 'yuv420p',
                 '-c:v', 'h264_videotoolbox',
                 '-q:v', String(Math.max(1, Math.min(100, 100 - qSettings.crf * 3))),
                 '-b:v', qSettings.bitrate,
@@ -294,12 +305,24 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             );
             break;
             
+        case 'none':
+            // Passthrough — no re-encoding, just repackage into HLS
+            args.push(
+                '-c:v', 'copy'
+            );
+            break;
+
         case 'cpu':
         default:
+            // Use Main profile for broadest browser compatibility
+            // Don't specify -level — let libx264 auto-detect based on resolution+framerate
+            // (e.g. 1080p50 needs level 4.2+, which level 4.0 doesn't support)
             args.push(
+                '-vf', 'yadif',
+                '-pix_fmt', 'yuv420p',
                 '-c:v', 'libx264',
                 '-preset', preset,
-                '-tune', 'zerolatency',
+                '-profile:v', 'main',
                 '-crf', String(qSettings.crf),
                 '-maxrate', qSettings.maxrate,
                 '-bufsize', qSettings.maxrate
@@ -308,15 +331,22 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
     }
     
     // Common output options for HLS
+    // In passthrough mode, also copy audio instead of re-encoding
+    if (hwAccel === 'none') {
+        args.push('-c:a', 'copy');
+    } else {
+        args.push(
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-ar', '44100',
+            '-ac', '2'
+        );
+    }
     args.push(
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-ar', '44100',
-        '-ac', '2',
         '-f', 'hls',
         '-hls_time', '4',
-        '-hls_list_size', '6',
-        '-hls_flags', 'delete_segments+append_list',
+        '-hls_list_size', '10',
+        '-hls_flags', 'delete_segments+append_list+independent_segments',
         '-hls_segment_filename', path.join(streamDir, 'segment%03d.ts'),
         '-y',
         playlistPath
@@ -340,7 +370,7 @@ app.use('/hls', express.static(HLS_DIR, {
 // Start transcoding a stream
 app.get('/transcode', requireAuth, async (req, res) => {
     const streamUrl = req.query.url;
-    const hwAccel = req.query.hwaccel || 'cpu';           // cpu, nvenc, qsv, vaapi, amf, videotoolbox
+    const hwAccel = req.query.hwaccel || 'cpu';           // none, cpu, nvenc, qsv, vaapi, amf, videotoolbox
     const hwDecode = req.query.hwdecode !== 'false';       // Enable/disable hardware decoding
     const preset = req.query.preset || 'fast';             // Encoding preset
     const quality = req.query.quality || 'balanced';       // performance, balanced, quality
@@ -465,6 +495,7 @@ app.get('/transcode', requireAuth, async (req, res) => {
     try {
         await waitForPlaylist();
         console.log(`[Transcoder] HLS playlist ready for stream ${streamId}`);
+
         res.json({
             streamId,
             hlsUrl: `/hls/${streamId}/playlist.m3u8`,
@@ -979,7 +1010,81 @@ app.delete('/playlists/:id', requireAuth, (req, res) => {
     }
 });
 
+// Fetch playlist content from a URL (server-side, avoids CORS issues)
+// Delegates to the generic /fetch endpoint logic
+app.post('/playlists/fetch-url', requireAuth, async (req, res) => {
+    const { url: playlistUrl } = req.body;
+    if (!playlistUrl) {
+        return res.status(400).json({ error: 'Missing url parameter' });
+    }
+
+    try {
+        console.log(`[Playlists] Fetching playlist from URL: ${playlistUrl}`);
+        const { execFile } = require('child_process');
+        const content = await new Promise((resolve, reject) => {
+            execFile('curl', [
+                '-s',               // silent
+                '-L',               // follow redirects
+                '-f',               // fail on HTTP errors
+                '--max-time', '60', // timeout
+                '--max-filesize', String(200 * 1024 * 1024), // 200MB limit
+                '-A', 'ViTV/1.0',   // user-agent
+                playlistUrl
+            ], { maxBuffer: 200 * 1024 * 1024 }, (error, stdout, stderr) => {
+                if (error) {
+                    reject(new Error(stderr || error.message));
+                } else {
+                    resolve(stdout);
+                }
+            });
+        });
+
+        res.json({ content });
+    } catch (err) {
+        console.error('[Playlists] Error fetching playlist URL:', err.message);
+        res.status(502).json({ error: `Failed to fetch playlist: ${err.message}` });
+    }
+});
+
 // ==================== END PLAYLIST ENDPOINTS ====================
+
+// ==================== PROXY FETCH ENDPOINT ====================
+// Generic server-side URL fetch using curl to handle malformed HTTP responses
+// from IPTV servers (e.g. duplicate Content-Length headers that Node.js rejects)
+app.post('/fetch', requireAuth, async (req, res) => {
+    const { url: fetchUrl } = req.body;
+    if (!fetchUrl) {
+        return res.status(400).json({ error: 'Missing url parameter' });
+    }
+
+    try {
+        console.log(`[Fetch] Fetching URL: ${fetchUrl}`);
+        const { execFile } = require('child_process');
+        const content = await new Promise((resolve, reject) => {
+            execFile('curl', [
+                '-s',               // silent
+                '-L',               // follow redirects
+                '-f',               // fail on HTTP errors
+                '--max-time', '60', // timeout
+                '--max-filesize', String(200 * 1024 * 1024), // 200MB limit
+                '-A', 'ViTV/1.0',   // user-agent
+                fetchUrl
+            ], { maxBuffer: 200 * 1024 * 1024 }, (error, stdout, stderr) => {
+                if (error) {
+                    reject(new Error(stderr || error.message));
+                } else {
+                    resolve(stdout);
+                }
+            });
+        });
+
+        res.json({ content });
+    } catch (err) {
+        console.error('[Fetch] Error fetching URL:', err.message);
+        res.status(502).json({ error: `Failed to fetch: ${err.message}` });
+    }
+});
+// ==================== END PROXY FETCH ENDPOINT ====================
 
 // Health check
 app.get('/health', (req, res) => {

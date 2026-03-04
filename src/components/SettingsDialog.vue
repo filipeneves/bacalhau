@@ -46,8 +46,8 @@
                             <v-divider class="my-4"></v-divider>
                             
                             <p class="text-subtitle-2 mb-3">
-                                <v-icon size="18" class="mr-1">mdi-share-variant</v-icon>
-                                Share URL Configuration
+                                <v-icon size="18" class="mr-1">mdi-link-variant</v-icon>
+                                URL Configuration
                             </p>
                             
                             <v-select
@@ -117,6 +117,10 @@
                                 GPU acceleration requires appropriate drivers and FFmpeg compiled with hardware support.
                             </v-alert>
 
+                            <v-alert type="warning" variant="tonal" class="mb-4" density="compact" v-if="hwAcceleration === 'none'">
+                                <strong>Passthrough mode:</strong> Some streams may not play in the browser if their codecs (e.g. MPEG-2, HEVC) are not supported by MSE/HLS.js. If playback fails, switch to CPU or GPU encoding.
+                            </v-alert>
+
                             <v-text-field
                                 v-model="transcoderUrlSetting"
                                 label="Transcoder Server URL"
@@ -136,6 +140,16 @@
                             </p>
 
                             <v-radio-group v-model="hwAcceleration" @update:model-value="saveHwAcceleration">
+                                <v-radio value="none">
+                                    <template #label>
+                                        <div>
+                                            <span class="font-weight-medium">None (Passthrough)</span>
+                                            <p class="text-caption text-grey mb-0">
+                                                No re-encoding. Repackages the stream into HLS as-is. Lowest resource usage.
+                                            </p>
+                                        </div>
+                                    </template>
+                                </v-radio>
                                 <v-radio value="cpu">
                                     <template #label>
                                         <div>

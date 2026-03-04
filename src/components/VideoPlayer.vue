@@ -3,9 +3,24 @@
         <v-row>
             <v-col cols="12">
                 <video ref="videoElement" v-if="videoKey" :key="videoKey" 
-                    :controls="!isLiveStream" autoplay
+                    :controls="!isLiveStream"
+                    x-webkit-airplay="allow"
                     class="video-player" :class="{ 'live-stream': isLiveStream }"
                     @click="togglePlay"></video>
+                
+                <!-- Codec support warning -->
+                <div v-if="codecWarning" class="codec-warning">
+                    <v-icon color="warning" class="mr-2">mdi-alert</v-icon>
+                    <div class="codec-warning-text">
+                        <strong>H.264 codec not supported</strong>
+                        <p>Your browser does not support H.264 video via MediaSource Extensions. Video playback will not work.</p>
+                        <p v-if="isChromium">Install the codec package: <code>sudo apt install chromium-codecs-ffmpeg-extra</code> and restart your browser.</p>
+                        <p v-else>Try using Chrome or Firefox instead.</p>
+                    </div>
+                    <v-btn icon variant="text" size="x-small" @click="codecWarning = false" class="ml-2">
+                        <v-icon>mdi-close</v-icon>
+                    </v-btn>
+                </div>
                 
                 <!-- Danmaku overlay (only when sharing) -->
                 <DanmakuOverlay
@@ -29,6 +44,12 @@
                         <span class="live-badge">LIVE</span>
                     </div>
                     <div class="controls-right">
+                        <v-btn v-if="airplayAvailable" icon variant="text" size="small" @click="requestAirPlay" title="AirPlay">
+                            <v-icon>mdi-apple-airplay</v-icon>
+                        </v-btn>
+                        <v-btn v-if="castAvailable" icon variant="text" size="small" @click="startCast" title="Cast to Chromecast">
+                            <v-icon>{{ isCasting ? 'mdi-cast-connected' : 'mdi-cast' }}</v-icon>
+                        </v-btn>
                         <v-btn icon variant="text" size="small" @click="toggleFullscreen">
                             <v-icon>{{ isFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen' }}</v-icon>
                         </v-btn>
@@ -45,6 +66,7 @@ import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
 import { getTranscoderUrl, getProxyUrl as getProxyUrlBase } from '@/services/urls.js';
 import { wsService } from '@/services/websocket.js';
+import { initCast, castAvailable, isCasting, airplayAvailable, startCastSession, stopCastSession, checkAirPlaySupport, requestAirPlay as requestAirPlayPicker } from '@/services/cast.js';
 import DanmakuOverlay from './DanmakuOverlay.vue';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
@@ -69,6 +91,28 @@ export default {
         const isFullscreen = ref(false);
         const isLiveStream = ref(true); // Assume live by default, will be updated when playing
         const isPlaying = ref(false);
+        const codecWarning = ref(false);
+        
+        // Detect if browser is Chromium (but not Chrome) for specific install instructions
+        const isChromium = ref(false);
+        {
+            const ua = navigator.userAgent;
+            const hasChromium = /Chromium/.test(ua) || (/Chrome/.test(ua) && !/Edg|OPR/.test(ua));
+            // Chrome includes "Chrome/" but NOT "Chromium/", while Chromium includes "Chromium/"
+            isChromium.value = /Chromium/.test(ua);
+        }
+        
+        // Check if H.264 is supported via MSE (MediaSource Extensions)
+        function checkH264MseSupport() {
+            if (typeof MediaSource === 'undefined') return false;
+            const codecs = [
+                'video/mp4; codecs="avc1.42E01E"',  // Baseline
+                'video/mp4; codecs="avc1.4D401E"',  // Main
+                'video/mp4; codecs="avc1.4D4020"',  // Main 3.2
+                'video/mp4; codecs="avc1.640028"',  // High 4.0
+            ];
+            return codecs.some(c => MediaSource.isTypeSupported(c));
+        }
         
         // Load volume settings from localStorage
         const VOLUME_STORAGE_KEY = 'bacalhau_video_volume';
@@ -86,6 +130,7 @@ export default {
         let hasFatalError = false; // Track if we've hit a fatal error to prevent error floods
         let currentStreamId = null; // Track transcoded stream for cleanup
         let currentRecordingId = null; // Track active recording for cleanup
+        let currentHlsUrl = null; // Track current HLS URL for casting
         
         // CORS proxy URL for external streams (dynamic based on browser location)
         const proxyUrl = getProxyUrlBase();
@@ -189,6 +234,9 @@ export default {
             addFullscreenListeners();
             addPiPListeners();
             
+            // Initialize casting support
+            initCast();
+            
             // Add beforeunload handler to stop recording when browser closes
             window.addEventListener('beforeunload', handleBeforeUnload);
             
@@ -206,6 +254,9 @@ export default {
                     const supported = typeof video.requestPictureInPicture === 'function';
                     app.setPipSupported(supported);
                     console.log('PiP support detected:', supported);
+                    
+                    // Check AirPlay support
+                    checkAirPlaySupport(video);
                 }
             };
             
@@ -497,6 +548,7 @@ export default {
 
             // For HLS streams
             if (type === 'application/x-mpegURL') {
+                currentHlsUrl = streamUrl;
                 if (Hls.isSupported()) {
                     console.log('Using HLS.js for playback');
                     
@@ -513,7 +565,10 @@ export default {
                         liveMaxLatencyDurationCount: 6,
                         maxBufferLength: 30,
                         maxMaxBufferLength: 60,
-                        maxBufferHole: 0.5,
+                        maxBufferHole: 1,
+                        nudgeOffset: 0.2,
+                        nudgeMaxRetry: 10,
+                        preferManagedMediaSource: false,    // Force standard MediaSource for Chromium compat
                         // Custom loader to proxy all requests through CORS proxy
                         xhrSetup: function(xhr, url) {
                             // Skip if already local/proxied
@@ -548,8 +603,27 @@ export default {
                         const live = !hlsInstance.levels[0]?.details?.live === false;
                         isLiveStream.value = live || data.levels.some(l => l.details?.live);
                         console.log('HLS manifest parsed, isLive:', isLiveStream.value);
-                        video.play().catch(err => console.error("Error playing video:", err));
                     });
+                    // Play once a full fragment is buffered (all source buffers ready)
+                    let hlsPlayStarted = false;
+                    const doPlay = () => {
+                        if (hlsPlayStarted) return;
+                        hlsPlayStarted = true;
+                        // Seek past any initial PTS gap to avoid bufferStalledError
+                        if (video.buffered.length > 0 && video.currentTime < video.buffered.start(0)) {
+                            video.currentTime = video.buffered.start(0);
+                        }
+                        console.log('[HLS] Starting playback, readyState:', video.readyState);
+                        video.play().catch(err => {
+                            console.error('Error playing video:', err);
+                            // If still not ready, wait for canplay
+                            if (err.name === 'NotSupportedError') {
+                                hlsPlayStarted = false;
+                            }
+                        });
+                    };
+                    hlsInstance.on(Hls.Events.FRAG_BUFFERED, doPlay);
+                    video.addEventListener('canplay', doPlay, { once: true });
                     hlsInstance.on(Hls.Events.ERROR, (event, data) => {
                         console.error(`HLS.js error: ${data.type} - ${data.details}`, data);
                         if (data.fatal) {
@@ -585,28 +659,64 @@ export default {
                     // Request transcoding to HLS format
                     const hlsUrl = await getTranscodedHlsUrl(url);
                     console.log('Got transcoded HLS URL:', hlsUrl);
+                    currentHlsUrl = hlsUrl;
+                    
+                    // Check H.264 MSE support before attempting playback
+                    if (!checkH264MseSupport()) {
+                        console.error('[VideoPlayer] H.264 not supported via MSE in this browser');
+                        codecWarning.value = true;
+                    }
                     
                     if (Hls.isSupported()) {
                         console.log('Playing transcoded HLS stream');
                         hlsInstance = new Hls({
                             enableWorker: true,
-                            lowLatencyMode: false,             // Disable for smoother playback
+                            lowLatencyMode: false,
                             backBufferLength: 60,
-                            liveSyncDurationCount: 3,          // Stay 3 segments behind live
-                            liveMaxLatencyDurationCount: 6,    // Max 6 segments behind
-                            maxBufferLength: 30,               // Buffer up to 30 seconds
+                            liveSyncDurationCount: 3,
+                            liveMaxLatencyDurationCount: 6,
+                            maxBufferLength: 30,
                             maxMaxBufferLength: 60,
-                            maxBufferHole: 0.5                 // Tolerate small gaps
+                            maxBufferHole: 1,
+                            nudgeOffset: 0.2,
+                            nudgeMaxRetry: 10,
+                            preferManagedMediaSource: false  // Force standard MediaSource for Chromium compatibility
                         });
+                        // IMPORTANT: attachMedia FIRST, then loadSource after MEDIA_ATTACHED
+                        // Calling loadSource before attachMedia triggers BUFFER_RESET before
+                        // the MediaSource exists, corrupting buffer-controller state and causing
+                        // the MediaSource to close before data can be appended in Chromium.
                         hlsInstance.attachMedia(video);
                         hlsInstance.on(Hls.Events.MEDIA_ATTACHED, () => {
+                            console.log('[HLS] Media attached, loading source');
                             hlsInstance.loadSource(hlsUrl);
                         });
                         hlsInstance.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
-                            // Transcoded streams are always live
                             isLiveStream.value = true;
                             console.log('Transcoded HLS manifest parsed, isLive: true');
-                            video.play().catch(err => console.error("Error playing video:", err));
+                        });
+                        // Play once a full fragment is buffered (dual approach for cross-browser compat)
+                        let hlsPlayStarted = false;
+                        const doPlay = () => {
+                            if (hlsPlayStarted) return;
+                            hlsPlayStarted = true;
+                            // Seek past any initial PTS gap to avoid bufferStalledError
+                            if (video.buffered.length > 0 && video.currentTime < video.buffered.start(0)) {
+                                video.currentTime = video.buffered.start(0);
+                            }
+                            console.log('[HLS] Starting playback, readyState:', video.readyState);
+                            video.play().catch(err => {
+                                console.warn('[HLS] play() error:', err.message);
+                                if (err.name === 'NotSupportedError') {
+                                    hlsPlayStarted = false;
+                                }
+                            });
+                        };
+                        hlsInstance.on(Hls.Events.FRAG_BUFFERED, doPlay);
+                        video.addEventListener('canplay', doPlay, { once: true });
+                        // Monitor video element errors for debugging
+                        video.addEventListener('error', (e) => {
+                            console.error('[Video] error event:', video.error?.code, video.error?.message);
                         });
                         hlsInstance.on(Hls.Events.ERROR, (event, data) => {
                             console.error(`HLS.js error: ${data.type} - ${data.details}`, data);
@@ -686,6 +796,68 @@ export default {
             wsService.sendDanmaku(text, color);
         }
 
+        // Cast to Chromecast
+        function startCast() {
+            if (isCasting.value) {
+                stopCastSession();
+                return;
+            }
+            
+            // Build an absolute URL for the Chromecast/AirPlay device to reach
+            // The TV can't access localhost, so use the custom domain from settings if available
+            let castUrl = currentHlsUrl;
+            if (castUrl) {
+                // Determine the base origin the cast device should use
+                let castBase;
+                if (app.customDomain) {
+                    // Build from separate domain/port/protocol fields (same as ShareStreamDialog)
+                    const protocol = app.customProtocol || 'http';
+                    const domain = app.customDomain;
+                    const port = app.customPort;
+                    const shouldShowPort = port && 
+                        !((protocol === 'http' && port === '80') || 
+                          (protocol === 'https' && port === '443'));
+                    const portPart = shouldShowPort ? `:${port}` : '';
+                    castBase = `${protocol}://${domain}${portPart}`;
+                } else {
+                    castBase = window.location.origin;
+                }
+                
+                if (castUrl.startsWith('http://') || castUrl.startsWith('https://')) {
+                    // Already absolute — replace the origin with the cast-reachable base
+                    try {
+                        const parsed = new URL(castUrl);
+                        castUrl = `${castBase}${parsed.pathname}${parsed.search}`;
+                    } catch {
+                        // If URL parsing fails, use as-is
+                    }
+                } else {
+                    // Relative URL — make absolute using cast base
+                    castUrl = `${castBase}${castUrl.startsWith('/') ? '' : '/'}${castUrl}`;
+                }
+            }
+            
+            if (!castUrl) {
+                console.warn('[Cast] No stream URL available to cast');
+                return;
+            }
+            
+            console.log('[Cast] Casting URL:', castUrl);
+            startCastSession(
+                castUrl,
+                currentChannel.value?.name || 'ViTV Stream',
+                currentChannel.value?.tvg?.logo || null
+            );
+        }
+
+        // AirPlay
+        function handleAirPlay() {
+            const video = videoElement.value;
+            if (video) {
+                requestAirPlayPicker(video);
+            }
+        }
+
         return {
             videoElement,
             containerElement,
@@ -699,14 +871,23 @@ export default {
             controlsVisible,
             toggleFullscreen,
             videoKey,
+            codecWarning,
+            isChromium,
             handleDanmakuSend,
+            castAvailable,
+            isCasting,
+            airplayAvailable,
+            startCast,
+            requestAirPlay: handleAirPlay,
             play: () => videoElement.value?.play(),
             pause: () => videoElement.value?.pause(),
             togglePlay: () => {
                 const video = videoElement.value;
                 if (!video) return;
                 if (video.paused) {
-                    video.play();
+                    video.play().catch(err => {
+                        console.warn('togglePlay: play failed, readyState:', video.readyState, err.message);
+                    });
                     isPlaying.value = true;
                 } else {
                     video.pause();
@@ -862,5 +1043,46 @@ video.live-stream::-moz-range-track {
     text-align: center;
     pointer-events: none;
     /* Allows clicks to go through */
+}
+
+/* Codec warning banner */
+.codec-warning {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(30, 30, 30, 0.95);
+    border: 1px solid #FFA726;
+    border-radius: 8px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: flex-start;
+    max-width: 500px;
+    z-index: 10;
+    color: white;
+}
+
+.codec-warning-text {
+    flex: 1;
+}
+
+.codec-warning-text strong {
+    font-size: 14px;
+    color: #FFA726;
+}
+
+.codec-warning-text p {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #ccc;
+    line-height: 1.4;
+}
+
+.codec-warning-text code {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: #81C784;
 }
 </style>

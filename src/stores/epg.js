@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
+import { apiFetch } from '@/services/api'
 
 export const useEpgStore = defineStore('epg', () => {
     const epgData = ref({}); // channelId -> programs array
@@ -103,14 +104,20 @@ export const useEpgStore = defineStore('epg', () => {
         epgUrl.value = url;
         
         try {
-            const response = await fetch(url);
-            let text = await response.text();
+            const response = await apiFetch('/fetch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+            const data = await response.json();
+            let text = data.content;
             
             // Handle gzipped content
             if (url.endsWith('.gz')) {
                 const pako = await import('pako');
-                const compressed = await response.arrayBuffer();
-                text = pako.ungzip(new Uint8Array(compressed), { to: 'string' });
+                const encoder = new TextEncoder();
+                const compressed = encoder.encode(text);
+                text = pako.ungzip(compressed, { to: 'string' });
             }
             
             epgData.value = parseXMLTV(text);

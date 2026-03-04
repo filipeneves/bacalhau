@@ -122,6 +122,12 @@
                 </template>
                 <span>Picture-in-Picture is not supported in this browser.<br>If using Firefox, right-click the video and select "Watch in Picture-in-Picture"</span>
             </v-tooltip>
+            <v-btn v-if="airplayAvailable" @click="requestAirPlay" title="AirPlay">
+                <v-icon>mdi-apple-airplay</v-icon>
+            </v-btn>
+            <v-btn v-if="castAvailable" @click="startCast" :title="isCasting ? 'Stop Casting' : 'Cast to Chromecast'">
+                <v-icon>{{ isCasting ? 'mdi-cast-connected' : 'mdi-cast' }}</v-icon>
+            </v-btn>
             <v-btn @click="showEpgDialog = true">
                 <v-icon>mdi-television-guide</v-icon>
             </v-btn>
@@ -130,7 +136,7 @@
         <v-main class="black-background main-content" :class="{ 'fullscreen-main': isFullscreen }">
             <div class="video-epg-container" :class="{ 'fullscreen-video-container': isFullscreen }">
                 <div class="video-wrapper" :class="{ 'fullscreen-video-wrapper': isFullscreen }">
-                    <VideoPlayer @toggle-fullscreen="toggleFullscreen" />
+                    <VideoPlayer ref="videoPlayerRef" @toggle-fullscreen="toggleFullscreen" />
                 </div>
                 <CurrentChannelEpg 
                     v-if="(!isFullscreen && !isMobile) || epgVisible" 
@@ -173,6 +179,7 @@ import { storeToRefs } from 'pinia';
 import { useTheme } from 'vuetify';
 import { useRouter } from 'vue-router';
 import { checkAuthStatus, logout } from '@/services/api';
+import { castAvailable, isCasting, airplayAvailable, startCastSession, stopCastSession } from '@/services/cast.js';
 
 
 export default {
@@ -192,6 +199,7 @@ export default {
         const menuExpanded = ref(true);
         const authEnabled = ref(false);
         const appElement = ref(null);
+        const videoPlayerRef = ref(null);
         const isFullscreen = ref(false);
         
         // Detect mobile device
@@ -298,6 +306,19 @@ export default {
         const togglePictureInPicture = () => {
             app.setPiP(!app.isPiP);
         };
+
+        // Cast functions - delegate to VideoPlayer component
+        function startCast() {
+            if (videoPlayerRef.value) {
+                videoPlayerRef.value.startCast();
+            }
+        }
+
+        function requestAirPlay() {
+            if (videoPlayerRef.value) {
+                videoPlayerRef.value.requestAirPlay();
+            }
+        }
 
         const toggleRecording = () => {
             app.setRecording(!app.isRecording);
@@ -444,6 +465,7 @@ export default {
             authEnabled,
             handleLogout,
             appElement,
+            videoPlayerRef,
             isFullscreen,
             drawerVisible,
             epgVisible,
@@ -452,6 +474,11 @@ export default {
             toggleFullscreen,
             handleMouseMove,
             handleTouchStart,
+            castAvailable,
+            isCasting,
+            airplayAvailable,
+            startCast,
+            requestAirPlay,
         };
 
     },

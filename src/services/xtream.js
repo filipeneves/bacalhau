@@ -9,9 +9,36 @@
  * - EPG (Electronic Program Guide)
  */
 
-import { getProxyUrl } from '@/services/urls.js';
+import { apiFetch } from '@/services/api';
 
-const CORS_PROXY = getProxyUrl();
+/**
+ * Helper: fetch a URL through the backend proxy (handles malformed HTTP responses)
+ * @param {string} url - The URL to fetch
+ * @returns {Promise<string>} Response body as text
+ */
+async function proxyFetch(url) {
+    const response = await apiFetch('/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Fetch failed: ${response.status}`);
+    }
+    const { content } = await response.json();
+    return content;
+}
+
+/**
+ * Helper: fetch a URL through the backend proxy and parse as JSON
+ * @param {string} url - The URL to fetch
+ * @returns {Promise<object>} Parsed JSON
+ */
+async function proxyFetchJSON(url) {
+    const text = await proxyFetch(url);
+    return JSON.parse(text);
+}
 
 /**
  * Authenticate with Xtream server and get account info
@@ -22,14 +49,9 @@ const CORS_PROXY = getProxyUrl();
  */
 export async function authenticate(server, username, password) {
     const baseUrl = normalizeServerUrl(server);
-    const url = `${CORS_PROXY}/${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    const url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
     
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Authentication failed: ${response.status} ${response.statusText}`);
-    }
-    
-    const data = await response.json();
+    const data = await proxyFetchJSON(url);
     
     if (data.user_info?.auth === 0) {
         throw new Error('Invalid username or password');
@@ -51,14 +73,9 @@ export async function authenticate(server, username, password) {
  */
 export async function getLiveCategories(server, username, password) {
     const baseUrl = normalizeServerUrl(server);
-    const url = `${CORS_PROXY}/${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_categories`;
+    const url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_categories`;
     
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch categories: ${response.status}`);
-    }
-    
-    return response.json();
+    return proxyFetchJSON(url);
 }
 
 /**
@@ -71,18 +88,13 @@ export async function getLiveCategories(server, username, password) {
  */
 export async function getLiveStreams(server, username, password, categoryId = null) {
     const baseUrl = normalizeServerUrl(server);
-    let url = `${CORS_PROXY}/${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`;
+    let url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`;
     
     if (categoryId) {
         url += `&category_id=${encodeURIComponent(categoryId)}`;
     }
     
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch streams: ${response.status}`);
-    }
-    
-    return response.json();
+    return proxyFetchJSON(url);
 }
 
 /**

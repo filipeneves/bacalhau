@@ -30,7 +30,7 @@ export const useAppStore = defineStore('app', () => {
     
     // Transcoding settings
     const transcoderUrl = ref(defaultTranscoderUrl);
-    const hwAcceleration = ref('cpu'); // cpu, nvenc, qsv, vaapi, amf
+    const hwAcceleration = ref('cpu'); // none, cpu, nvenc, qsv, vaapi, amf, videotoolbox
     const hwDecoding = ref(true); // Use hardware decoding when available
     const transcodingPreset = ref('fast'); // ultrafast, superfast, veryfast, faster, fast, medium
     const transcodingQuality = ref('balanced'); // performance, balanced, quality
