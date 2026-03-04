@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-04
+
+### Added
+- **VOD Support (Movies & Series)**: Browse and play Video on Demand content from Xtream Codes playlists
+  - Channels/VOD toggle in the sidebar (only shown for Xtream playlists)
+  - Movies and Series tabs with category browsing
+  - Series drill-down: season selector with episode list, metadata, and poster art
+  - Search filtering across categories, movies, series, and episodes
+  - VOD playback with native video player and seek bar
+  - Automatic transcoder fallback for unsupported formats (MKV, AVI, etc.)
+  - Full Xtream Codes API integration: categories, streams, series info, and stream URLs
+
 ## [1.0.7] - 2026-03-03
 
 ### Added

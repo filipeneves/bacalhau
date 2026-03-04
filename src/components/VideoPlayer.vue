@@ -526,13 +526,15 @@ export default {
             type = type || getMimeTypeFromUrl(url);
             console.log('Using type:', type);
             
-            // Determine if this is a live stream based on type
-            // HLS and MPEG-TS are typically live, MP4/WebM are typically VOD
-            const isLive = type === 'application/x-mpegURL' || 
+            // Determine if this is a live stream based on type and VOD flag
+            // HLS and MPEG-TS are typically live, MP4/WebM/MKV are typically VOD
+            // If channel has isVod flag, always treat as non-live
+            const isVod = currentChannel.value?.isVod === true;
+            const isLive = !isVod && (type === 'application/x-mpegURL' || 
                            type === 'video/mp2t' || 
-                           type === 'application/octet-stream';
+                           type === 'application/octet-stream');
             isLiveStream.value = isLive;
-            console.log('Is live stream:', isLive);
+            console.log('Is live stream:', isLive, 'Is VOD:', isVod);
 
             videoKey.value = Date.now();
             await nextTick(); // Ensure DOM is up-to-date
@@ -777,7 +779,52 @@ export default {
                 console.log('Using native video playback for type:', type);
                 isLiveStream.value = false; // MP4/WebM are typically on-demand
                 video.src = streamUrl;
+                
+                // Restore volume settings
+                video.volume = volume.value;
+                video.muted = isMuted.value;
+                
                 video.play().catch(err => console.error("Error playing video:", err));
+                
+                // If native playback fails (e.g. MKV/unsupported codec), try transcoder
+                video.addEventListener('error', async () => {
+                    const errorCode = video.error?.code;
+                    console.warn('[VideoPlayer] Native playback error, code:', errorCode, video.error?.message);
+                    if (errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || errorCode === MediaError.MEDIA_ERR_DECODE) {
+                        console.log('[VideoPlayer] Attempting transcoder fallback for VOD');
+                        try {
+                            const hlsUrl = await getTranscodedHlsUrl(url);
+                            currentHlsUrl = hlsUrl;
+                            if (Hls.isSupported()) {
+                                cleanupPlayer();
+                                videoKey.value = Date.now();
+                                await nextTick();
+                                const retryVideo = videoElement.value;
+                                if (!retryVideo) return;
+                                
+                                hlsInstance = new Hls({
+                                    enableWorker: true,
+                                    lowLatencyMode: false,
+                                    preferManagedMediaSource: false
+                                });
+                                hlsInstance.attachMedia(retryVideo);
+                                hlsInstance.on(Hls.Events.MEDIA_ATTACHED, () => {
+                                    hlsInstance.loadSource(hlsUrl);
+                                });
+                                let started = false;
+                                const doPlay = () => {
+                                    if (started) return;
+                                    started = true;
+                                    retryVideo.play().catch(e => console.error('[VOD] play error:', e));
+                                };
+                                hlsInstance.on(Hls.Events.FRAG_BUFFERED, doPlay);
+                                retryVideo.addEventListener('canplay', doPlay, { once: true });
+                            }
+                        } catch (e) {
+                            console.error('[VideoPlayer] Transcoder fallback also failed:', e);
+                        }
+                    }
+                }, { once: true });
             }
         }
 
@@ -785,6 +832,8 @@ export default {
         function getMimeTypeFromUrl(url) {
             if (url.includes('.m3u8')) return 'application/x-mpegURL';
             if (url.includes('.mp4')) return 'video/mp4';
+            if (url.includes('.mkv')) return 'video/x-matroska';
+            if (url.includes('.avi')) return 'video/x-msvideo';
             if (url.includes('.webm')) return 'video/webm';
             if (url.includes('.ts')) return 'video/mp2t'; // MPEG-TS streams (.ts extension)
             if (url.match(/\d+$/)) return 'video/mp2t'; // Raw MPEG-TS streams (no extension)

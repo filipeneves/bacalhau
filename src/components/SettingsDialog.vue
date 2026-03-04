@@ -625,7 +625,7 @@
                                                             >
                                                                 <template #prepend>
                                                                     <v-avatar size="24" class="ml-6 mr-2">
-                                                                        <v-img :src="channel.tvg?.logo" v-if="channel.tvg?.logo">
+                                                                        <v-img :src="proxyUrl(channel.tvg?.logo)" v-if="channel.tvg?.logo">
                                                                             <template #error>
                                                                                 <v-icon size="16">mdi-television</v-icon>
                                                                             </template>
@@ -707,6 +707,7 @@ import { storeToRefs } from 'pinia';
 import { fetchAndConvertToM3U } from '@/services/xtream';
 import { parse } from 'iptv-playlist-parser';
 import { getTranscoderUrl } from '@/services/urls.js';
+import { proxyUrl } from '@/services/mixedContent.js';
 
 // API base URL for playlist storage (dynamic based on browser location)
 const TRANSCODER_URL = getTranscoderUrl();

@@ -5,7 +5,7 @@
             <v-app-bar-title class="app-bar-title-custom">
                 <v-row align="center" no-gutters>
                     <v-col cols="auto">
-                        <v-img v-if="channelLogo" :src="channelLogo" alt="Channel Logo"
+                        <v-img v-if="channelLogo" :src="proxyUrl(channelLogo)" alt="Channel Logo"
                             width="50" class="mr-3" cover></v-img>
                     </v-col>
                     <v-col class="channel-name-col">
@@ -101,6 +101,7 @@ import { getTranscoderUrl } from '@/services/urls.js';
 import { wsService } from '@/services/websocket.js';
 import DanmakuOverlay from '@/components/DanmakuOverlay.vue';
 import Hls from 'hls.js';
+import { proxyUrl } from '@/services/mixedContent.js';
 
 export default {
     name: 'GuestView',
@@ -449,7 +450,8 @@ export default {
             handleDanmakuSend,
             handleVideoError,
             handleLoadStart,
-            handleCanPlay
+            handleCanPlay,
+            proxyUrl
         };
     }
 };

@@ -1086,6 +1086,69 @@ app.post('/fetch', requireAuth, async (req, res) => {
 });
 // ==================== END PROXY FETCH ENDPOINT ====================
 
+// ==================== MIXED-CONTENT PROXY ENDPOINT ====================
+// Proxy HTTP resources through the server to avoid mixed-content blocking on HTTPS.
+// Works for any resource type: images, XML, JSON, media files, etc.
+app.get('/mixed-content-proxy', async (req, res) => {
+    const targetUrl = req.query.url;
+    if (!targetUrl) {
+        return res.status(400).json({ error: 'Missing url parameter' });
+    }
+
+    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+        return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    try {
+        const protocol = targetUrl.startsWith('https://') ? require('https') : require('http');
+        const request = protocol.get(targetUrl, {
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'ViTV/1.0'
+            }
+        }, (response) => {
+            // Follow redirects
+            if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                const redirectUrl = new URL(response.headers.location, targetUrl).href;
+                return res.redirect(`/mixed-content-proxy?url=${encodeURIComponent(redirectUrl)}`);
+            }
+
+            if (response.statusCode !== 200) {
+                return res.status(response.statusCode).end();
+            }
+
+            // Forward content-type and content-length
+            const contentType = response.headers['content-type'];
+            if (contentType) {
+                res.setHeader('Content-Type', contentType);
+            }
+            const contentLength = response.headers['content-length'];
+            if (contentLength) {
+                res.setHeader('Content-Length', contentLength);
+            }
+            // Cache for 24 hours
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+
+            // Pipe the response data directly
+            response.pipe(res);
+        });
+
+        request.on('error', (err) => {
+            console.error('[MixedContentProxy] Error fetching:', targetUrl, err.message);
+            res.status(502).end();
+        });
+
+        request.on('timeout', () => {
+            request.destroy();
+            res.status(504).end();
+        });
+    } catch (err) {
+        console.error('[MixedContentProxy] Error:', err.message);
+        res.status(500).end();
+    }
+});
+// ==================== END MIXED-CONTENT PROXY ENDPOINT ====================
+
 // Health check
 app.get('/health', (req, res) => {
     res.json({ 

@@ -62,7 +62,7 @@
                     <v-icon v-if="item.isFavorite" size="14" color="warning" class="ml-4 mr-1">mdi-star</v-icon>
                     <v-avatar size="30" class="rounded-0" :class="item.isFavorite ? 'ml-1' : 'ml-6'">
                         <v-img 
-                            :src="item.tvg?.logo" 
+                            :src="proxyUrl(item.tvg?.logo)" 
                             alt="Channel Logo"
                             loading="lazy"
                         >
@@ -83,6 +83,7 @@
 <script>
 import { usePlaylistStore } from '@/stores/playlist';
 import { computed, toRefs, ref, watch, shallowRef } from 'vue';
+import { proxyUrl } from '@/services/mixedContent.js';
 
 export default {
     name: 'Channels',
@@ -261,7 +262,8 @@ export default {
             toggleCategory,
             isExpanded,
             expandAll,
-            collapseAll
+            collapseAll,
+            proxyUrl
         };
     }
 };
