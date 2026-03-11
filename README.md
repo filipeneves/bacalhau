@@ -30,6 +30,7 @@
 
 - 📺 **M3U/M3U8 Playlist Support** - Import local files or URLs (up to 200MB)
 - 🔗 **Xtream Codes API** - Connect to Xtream-compatible providers
+- 🎬 **VOD Support** - Browse and play Movies & Series from Xtream Codes playlists
 - 📖 **EPG Guide** - Electronic Program Guide with XMLTV support
 - 🎬 **Live Recording** - Record streams directly to your server
 - 🔗 **Stream Sharing** - Share live streams with guests via unique URLs

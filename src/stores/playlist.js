@@ -597,11 +597,18 @@ export const usePlaylistStore = defineStore('playlist', () => {
         const streamUrl = getSeriesStreamUrl(creds.server, creds.username, creds.password, episode.id, extension);
         
         const seriesName = selectedSeries.value?.name || seriesInfo.value?.info?.name || 'Series';
-        const episodeTitle = episode.title || episode.episode_num || '';
+        const episodeNum = episode.episode_num || '';
         const seasonNum = episode.season || '';
+        const episodeTitle = episode.title || '';
+        
+        // Format: "Series Name - S01E03" or "Series Name - S01E03 - Episode Title" 
+        let displayName = `${seriesName} - S${String(seasonNum).padStart(2, '0')}E${String(episodeNum).padStart(2, '0')}`;
+        if (episodeTitle && episodeTitle !== episodeNum) {
+            displayName += ` - ${episodeTitle}`;
+        }
         
         currentChannel.value = {
-            name: `${seriesName} - S${seasonNum}E${episodeTitle}`,
+            name: displayName,
             url: streamUrl,
             tvg: {
                 logo: episode.info?.movie_image || selectedSeries.value?.cover || ''

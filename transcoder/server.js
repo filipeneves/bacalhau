@@ -145,7 +145,7 @@ if (!fs.existsSync(PLAYLISTS_DIR)) {
 }
 
 // Build FFmpeg arguments based on hardware acceleration settings
-function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, streamDir, playlistPath }) {
+function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, streamDir, playlistPath, isVod }) {
     const args = [];
     
     // Quality settings
@@ -219,10 +219,17 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
     
     // Common input options
     args.push(
-        '-i', streamUrl,
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
+        '-i', streamUrl
+    );
+    
+    // Reconnect options only for live streams, not VOD
+    if (!isVod) {
+        // Insert reconnect options before -i
+        const iIdx = args.indexOf('-i');
+        args.splice(iIdx, 0, '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+    }
+    
+    args.push(
         // Only map video and audio streams - ignore subtitles/data streams that can cause errors
         '-map', '0:v:0?',   // First video stream (optional)
         '-map', '0:a:0?'    // First audio stream (optional)
@@ -342,15 +349,29 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             '-ac', '2'
         );
     }
-    args.push(
-        '-f', 'hls',
-        '-hls_time', '4',
-        '-hls_list_size', '10',
-        '-hls_flags', 'delete_segments+append_list+independent_segments',
-        '-hls_segment_filename', path.join(streamDir, 'segment%03d.ts'),
-        '-y',
-        playlistPath
-    );
+    // HLS output options differ for live vs VOD
+    if (isVod) {
+        args.push(
+            '-f', 'hls',
+            '-hls_time', '4',
+            '-hls_list_size', '0',
+            '-hls_playlist_type', 'event',
+            '-hls_flags', 'independent_segments',
+            '-hls_segment_filename', path.join(streamDir, 'segment%03d.ts'),
+            '-y',
+            playlistPath
+        );
+    } else {
+        args.push(
+            '-f', 'hls',
+            '-hls_time', '4',
+            '-hls_list_size', '10',
+            '-hls_flags', 'delete_segments+append_list+independent_segments',
+            '-hls_segment_filename', path.join(streamDir, 'segment%03d.ts'),
+            '-y',
+            playlistPath
+        );
+    }
     
     return args;
 }
@@ -374,16 +395,17 @@ app.get('/transcode', requireAuth, async (req, res) => {
     const hwDecode = req.query.hwdecode !== 'false';       // Enable/disable hardware decoding
     const preset = req.query.preset || 'fast';             // Encoding preset
     const quality = req.query.quality || 'balanced';       // performance, balanced, quality
+    const isVod = req.query.vod === 'true';                // VOD mode (full playlist, no segment deletion)
     
     if (!streamUrl) {
         return res.status(400).json({ error: 'Missing url parameter' });
     }
 
     console.log(`[Transcoder] Request to transcode: ${streamUrl}`);
-    console.log(`[Transcoder] Options: hwaccel=${hwAccel}, hwdecode=${hwDecode}, preset=${preset}, quality=${quality}`);
+    console.log(`[Transcoder] Options: hwaccel=${hwAccel}, hwdecode=${hwDecode}, preset=${preset}, quality=${quality}, vod=${isVod}`);
 
     // Check if we already have this stream with same settings
-    const streamKey = `${streamUrl}-${hwAccel}-${preset}-${quality}`;
+    const streamKey = `${streamUrl}-${hwAccel}-${preset}-${quality}-${isVod ? 'vod' : 'live'}`;
     const existingStream = Array.from(activeStreams.entries()).find(
         ([, data]) => data.streamKey === streamKey
     );
@@ -414,7 +436,8 @@ app.get('/transcode', requireAuth, async (req, res) => {
         preset,
         quality,
         streamDir,
-        playlistPath
+        playlistPath,
+        isVod
     });
 
     console.log(`[Transcoder] Starting FFmpeg for stream ${streamId}`);
