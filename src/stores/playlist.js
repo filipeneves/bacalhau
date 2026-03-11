@@ -4,6 +4,7 @@ import { parse } from 'iptv-playlist-parser';
 import { useAppStore } from './app.js';
 import { useEpgStore } from './epg.js';
 import { getTranscoderUrl } from '@/services/urls.js';
+import { getVodCategories, getVodStreams, getVodInfo, getVodStreamUrl, getSeriesCategories, getSeries, getSeriesInfo, getSeriesStreamUrl } from '@/services/xtream.js';
 
 // API base URL for playlist storage (dynamic based on browser location)
 const TRANSCODER_URL = getTranscoderUrl();
@@ -21,6 +22,16 @@ export const usePlaylistStore = defineStore('playlist', () => {
     // Multiple playlists support
     const savedPlaylists = ref([]);
     const activePlaylistId = ref(null);
+
+    // VOD state
+    const vodMode = ref(false);          // true = showing VOD, false = showing channels
+    const vodCategories = ref([]);       // VOD category list
+    const vodItems = ref([]);            // Current VOD items (movies/series in selected category)
+    const vodLoading = ref(false);       // Loading state for VOD
+    const selectedVodCategory = ref(null); // Currently selected VOD category
+    const vodType = ref('movie');        // 'movie' or 'series'
+    const seriesInfo = ref(null);        // Selected series details (seasons/episodes)
+    const selectedSeries = ref(null);    // Currently selected series item
 
     // Load saved playlists from server on init
     async function initPlaylists() {
@@ -461,6 +472,183 @@ export const usePlaylistStore = defineStore('playlist', () => {
     // Initialize playlists from storage
     initPlaylists();
 
+    // ==================== VOD Functions ====================
+    
+    // Check if the active playlist is an Xtream playlist
+    const isXtreamPlaylist = computed(() => {
+        const pl = activePlaylist.value;
+        return !!(pl?.xtream?.server && pl?.xtream?.username && pl?.xtream?.password);
+    });
+
+    // Get Xtream credentials from active playlist
+    function getXtreamCredentials() {
+        const pl = activePlaylist.value;
+        if (!pl?.xtream) return null;
+        return {
+            server: pl.xtream.server,
+            username: pl.xtream.username,
+            password: pl.xtream.password
+        };
+    }
+
+    // Load VOD categories
+    async function loadVodCategories() {
+        const creds = getXtreamCredentials();
+        if (!creds) return;
+        
+        vodLoading.value = true;
+        try {
+            const [movieCats, seriesCats] = await Promise.all([
+                getVodCategories(creds.server, creds.username, creds.password).catch(() => []),
+                getSeriesCategories(creds.server, creds.username, creds.password).catch(() => [])
+            ]);
+            
+            // Store both types — we'll filter by vodType
+            vodCategories.value = {
+                movie: Array.isArray(movieCats) ? movieCats : [],
+                series: Array.isArray(seriesCats) ? seriesCats : []
+            };
+            console.log(`[VOD] Loaded ${vodCategories.value.movie.length} movie categories, ${vodCategories.value.series.length} series categories`);
+        } catch (err) {
+            console.error('[VOD] Error loading categories:', err);
+            vodCategories.value = { movie: [], series: [] };
+        } finally {
+            vodLoading.value = false;
+        }
+    }
+
+    // Get current VOD categories based on vodType
+    const currentVodCategories = computed(() => {
+        if (!vodCategories.value || !vodCategories.value[vodType.value]) return [];
+        return vodCategories.value[vodType.value];
+    });
+
+    // Load VOD items for a category
+    async function loadVodItems(categoryId = null) {
+        const creds = getXtreamCredentials();
+        if (!creds) return;
+        
+        selectedVodCategory.value = categoryId;
+        seriesInfo.value = null;
+        selectedSeries.value = null;
+        vodLoading.value = true;
+        
+        try {
+            let items;
+            if (vodType.value === 'movie') {
+                items = await getVodStreams(creds.server, creds.username, creds.password, categoryId);
+            } else {
+                items = await getSeries(creds.server, creds.username, creds.password, categoryId);
+            }
+            vodItems.value = Array.isArray(items) ? items : [];
+            console.log(`[VOD] Loaded ${vodItems.value.length} ${vodType.value} items`);
+        } catch (err) {
+            console.error('[VOD] Error loading items:', err);
+            vodItems.value = [];
+        } finally {
+            vodLoading.value = false;
+        }
+    }
+
+    // Load series details (seasons/episodes)
+    async function loadSeriesDetails(series) {
+        const creds = getXtreamCredentials();
+        if (!creds) return;
+        
+        selectedSeries.value = series;
+        vodLoading.value = true;
+        
+        try {
+            const info = await getSeriesInfo(creds.server, creds.username, creds.password, series.series_id);
+            seriesInfo.value = info;
+            console.log('[VOD] Loaded series info:', info?.info?.name, 'seasons:', Object.keys(info?.episodes || {}).length);
+        } catch (err) {
+            console.error('[VOD] Error loading series info:', err);
+            seriesInfo.value = null;
+        } finally {
+            vodLoading.value = false;
+        }
+    }
+
+    // Play a VOD item
+    function playVodItem(item) {
+        const creds = getXtreamCredentials();
+        if (!creds) return;
+        
+        const extension = item.container_extension || 'mp4';
+        const streamUrl = getVodStreamUrl(creds.server, creds.username, creds.password, item.stream_id, extension);
+        
+        currentChannel.value = {
+            name: item.name || item.title || 'VOD',
+            url: streamUrl,
+            tvg: {
+                logo: item.stream_icon || item.cover || ''
+            },
+            isVod: true
+        };
+    }
+
+    // Play a series episode
+    function playSeriesEpisode(episode) {
+        const creds = getXtreamCredentials();
+        if (!creds) return;
+        
+        const extension = episode.container_extension || 'mp4';
+        const streamUrl = getSeriesStreamUrl(creds.server, creds.username, creds.password, episode.id, extension);
+        
+        const seriesName = selectedSeries.value?.name || seriesInfo.value?.info?.name || 'Series';
+        const episodeNum = episode.episode_num || '';
+        const seasonNum = episode.season || '';
+        const episodeTitle = episode.title || '';
+        
+        // Format: "Series Name - S01E03" or "Series Name - S01E03 - Episode Title" 
+        let displayName = `${seriesName} - S${String(seasonNum).padStart(2, '0')}E${String(episodeNum).padStart(2, '0')}`;
+        if (episodeTitle && episodeTitle !== episodeNum) {
+            displayName += ` - ${episodeTitle}`;
+        }
+        
+        currentChannel.value = {
+            name: displayName,
+            url: streamUrl,
+            tvg: {
+                logo: episode.info?.movie_image || selectedSeries.value?.cover || ''
+            },
+            isVod: true
+        };
+    }
+
+    // Toggle VOD mode on/off
+    function setVodMode(enabled) {
+        vodMode.value = enabled;
+        if (enabled && vodCategories.value.length === 0 && (!vodCategories.value.movie || vodCategories.value.movie.length === 0)) {
+            loadVodCategories();
+        }
+    }
+
+    // Switch between movies and series
+    function setVodType(type) {
+        vodType.value = type;
+        vodItems.value = [];
+        selectedVodCategory.value = null;
+        seriesInfo.value = null;
+        selectedSeries.value = null;
+    }
+
+    // Go back in VOD navigation
+    function vodGoBack() {
+        if (seriesInfo.value) {
+            // Go back from series detail to series list
+            seriesInfo.value = null;
+            selectedSeries.value = null;
+        } else if (vodItems.value.length > 0) {
+            // Go back from items to categories
+            vodItems.value = [];
+            selectedVodCategory.value = null;
+        }
+    }
+
+    // ==================== END VOD Functions ====================
+
     return {
         isPlaylistLoaded,
         isLoadingPlaylist,
@@ -488,6 +676,25 @@ export const usePlaylistStore = defineStore('playlist', () => {
         toggleFavoriteChannel,
         toggleHiddenCategory,
         toggleHiddenChannel,
+        // VOD
+        vodMode,
+        vodCategories,
+        vodItems,
+        vodLoading,
+        vodType,
+        selectedVodCategory,
+        seriesInfo,
+        selectedSeries,
+        isXtreamPlaylist,
+        currentVodCategories,
+        loadVodCategories,
+        loadVodItems,
+        loadSeriesDetails,
+        playVodItem,
+        playSeriesEpisode,
+        setVodMode,
+        setVodType,
+        vodGoBack,
     };
 
 });

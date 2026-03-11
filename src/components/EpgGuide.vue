@@ -124,6 +124,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useEpgStore } from '@/stores/epg';
 import { usePlaylistStore } from '@/stores/playlist';
+import { proxyUrl } from '@/services/mixedContent.js';
 
 export default {
     name: 'EpgGuide',
@@ -171,7 +172,7 @@ export default {
             return channels.map(ch => ({
                 id: ch.tvg?.id || ch.name,
                 name: ch.name,
-                logo: ch.tvg?.logo,
+                logo: proxyUrl(ch.tvg?.logo),
                 originalChannel: ch
             })).slice(0, 20); // Limit for performance
         });

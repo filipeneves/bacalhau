@@ -136,6 +136,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useEpgStore } from '@/stores/epg';
 import { usePlaylistStore } from '@/stores/playlist';
+import { proxyUrl } from '@/services/mixedContent.js';
 
 export default {
     name: 'EpgDialog',
@@ -209,7 +210,7 @@ export default {
             return filteredChannels.map((ch, index) => ({
                 id: ch.tvg?.id || ch.name,
                 name: ch.name,
-                logo: ch.tvg?.logo,
+                logo: proxyUrl(ch.tvg?.logo),
                 number: index + 1,
                 originalChannel: ch
             }));

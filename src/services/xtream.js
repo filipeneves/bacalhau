@@ -219,6 +219,126 @@ function normalizeServerUrl(server) {
     return url;
 }
 
+// ==================== VOD API ====================
+
+/**
+ * Get VOD categories
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @returns {Promise<array>} List of VOD categories
+ */
+export async function getVodCategories(server, username, password) {
+    const baseUrl = normalizeServerUrl(server);
+    const url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_vod_categories`;
+    return proxyFetchJSON(url);
+}
+
+/**
+ * Get VOD streams (movies)
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {string} categoryId - Optional category ID to filter
+ * @returns {Promise<array>} List of VOD items
+ */
+export async function getVodStreams(server, username, password, categoryId = null) {
+    const baseUrl = normalizeServerUrl(server);
+    let url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_vod_streams`;
+    if (categoryId) {
+        url += `&category_id=${encodeURIComponent(categoryId)}`;
+    }
+    return proxyFetchJSON(url);
+}
+
+/**
+ * Get VOD info (movie details)
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {number} vodId - VOD stream ID
+ * @returns {Promise<object>} VOD details (plot, cast, duration, etc.)
+ */
+export async function getVodInfo(server, username, password, vodId) {
+    const baseUrl = normalizeServerUrl(server);
+    const url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_vod_info&vod_id=${encodeURIComponent(vodId)}`;
+    return proxyFetchJSON(url);
+}
+
+/**
+ * Get VOD stream URL
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {number} streamId - Stream ID
+ * @param {string} extension - Container extension (mp4, mkv, avi)
+ * @returns {string} VOD stream URL
+ */
+export function getVodStreamUrl(server, username, password, streamId, extension = 'mp4') {
+    const baseUrl = normalizeServerUrl(server);
+    return `${baseUrl}/movie/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${streamId}.${extension}`;
+}
+
+/**
+ * Get series categories
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @returns {Promise<array>} List of series categories
+ */
+export async function getSeriesCategories(server, username, password) {
+    const baseUrl = normalizeServerUrl(server);
+    const url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_series_categories`;
+    return proxyFetchJSON(url);
+}
+
+/**
+ * Get series list
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {string} categoryId - Optional category ID to filter
+ * @returns {Promise<array>} List of series
+ */
+export async function getSeries(server, username, password, categoryId = null) {
+    const baseUrl = normalizeServerUrl(server);
+    let url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_series`;
+    if (categoryId) {
+        url += `&category_id=${encodeURIComponent(categoryId)}`;
+    }
+    return proxyFetchJSON(url);
+}
+
+/**
+ * Get series info (seasons, episodes)
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {number} seriesId - Series ID
+ * @returns {Promise<object>} Series details with episodes
+ */
+export async function getSeriesInfo(server, username, password, seriesId) {
+    const baseUrl = normalizeServerUrl(server);
+    const url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_series_info&series_id=${encodeURIComponent(seriesId)}`;
+    return proxyFetchJSON(url);
+}
+
+/**
+ * Get series episode stream URL
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {number} streamId - Episode stream ID
+ * @param {string} extension - Container extension
+ * @returns {string} Episode stream URL
+ */
+export function getSeriesStreamUrl(server, username, password, streamId, extension = 'mp4') {
+    const baseUrl = normalizeServerUrl(server);
+    return `${baseUrl}/series/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${streamId}.${extension}`;
+}
+
+// ==================== END VOD API ====================
+
 export default {
     authenticate,
     getLiveCategories,
@@ -226,5 +346,13 @@ export default {
     getEpgUrl,
     getStreamUrl,
     streamsToM3U,
-    fetchAndConvertToM3U
+    fetchAndConvertToM3U,
+    getVodCategories,
+    getVodStreams,
+    getVodInfo,
+    getVodStreamUrl,
+    getSeriesCategories,
+    getSeries,
+    getSeriesInfo,
+    getSeriesStreamUrl
 };

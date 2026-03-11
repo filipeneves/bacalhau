@@ -12,12 +12,27 @@
             <!-- Search Toolbar -->
             <v-toolbar flat dense density="compact" class="sticky-search">
                 <v-text-field v-model="searchQuery" prepend-inner-icon="mdi-magnify" dense hide-details clearable
-                    placeholder="Search channels..."></v-text-field>
+                    :placeholder="vodMode ? 'Search VOD...' : 'Search channels...'"></v-text-field>
             </v-toolbar>
 
-            <!-- scrollable channel list -->
+            <!-- scrollable channel / VOD list -->
             <div class="channels-list flex-grow-1">
-                <Channels :search="searchQuery" />
+                <VodBrowser v-if="vodMode" :search="searchQuery" />
+                <Channels v-else :search="searchQuery" />
+            </div>
+
+            <!-- VOD / Channels toggle (only for Xtream playlists) -->
+            <div v-if="isXtreamPlaylist" class="vod-toggle-bar">
+                <v-btn-toggle v-model="vodMode" mandatory density="compact" color="primary" class="vod-toggle" rounded="0">
+                    <v-btn :value="false" size="small" class="vod-toggle-btn">
+                        <v-icon start size="16">mdi-television</v-icon>
+                        Channels
+                    </v-btn>
+                    <v-btn :value="true" size="small" class="vod-toggle-btn">
+                        <v-icon start size="16">mdi-movie-open</v-icon>
+                        VOD
+                    </v-btn>
+                </v-btn-toggle>
             </div>
 
             <!-- Bottom Toolbar for Buttons -->
@@ -56,7 +71,7 @@
                     <v-btn @click="toggleMenu" :icon="menuExpanded ? 'mdi-menu-open' : 'mdi-menu-close'" tile></v-btn>   
                     </v-col>
                     <v-col cols="auto">
-                        <v-img v-if="currentChannel?.tvg?.logo" :src="currentChannel?.tvg?.logo" alt="Channel Logo"
+                        <v-img v-if="currentChannel?.tvg?.logo" :src="proxyUrl(currentChannel?.tvg?.logo)" alt="Channel Logo"
                             width="50" class="mr-3" cover></v-img>
                     </v-col>
                     <v-col class="channel-name-col">
@@ -165,6 +180,7 @@
 <script>
 import VideoPlayer from '@/components/VideoPlayer.vue';
 import Channels from '@/components/Channels.vue';
+import VodBrowser from '@/components/VodBrowser.vue';
 import CurrentChannelEpg from '@/components/CurrentChannelEpg.vue';
 import EpgDialog from '@/components/EpgDialog.vue';
 import SettingsDialog from '@/components/SettingsDialog.vue';
@@ -174,6 +190,7 @@ import ShareStreamDialog from '@/components/ShareStreamDialog.vue';
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
+import { proxyUrl } from '@/services/mixedContent.js';
 import { useEpgStore } from '@/stores/epg';
 import { storeToRefs } from 'pinia';
 import { useTheme } from 'vuetify';
@@ -184,7 +201,7 @@ import { castAvailable, isCasting, airplayAvailable, startCastSession, stopCastS
 
 export default {
     name: 'App',
-    components: { VideoPlayer, Channels, CurrentChannelEpg, EpgDialog, SettingsDialog, RecordingsDialog, ImportPlaylistDialog, ShareStreamDialog },
+    components: { VideoPlayer, Channels, VodBrowser, CurrentChannelEpg, EpgDialog, SettingsDialog, RecordingsDialog, ImportPlaylistDialog, ShareStreamDialog },
 
     setup() {
         const playlist = usePlaylistStore();
@@ -232,6 +249,13 @@ export default {
         let recordingInterval = null;
 
         const searchQuery = ref('');
+
+        // VOD mode
+        const isXtreamPlaylist = computed(() => playlist.isXtreamPlaylist);
+        const vodMode = computed({
+            get: () => playlist.vodMode,
+            set: (val) => playlist.setVodMode(val)
+        });
 
         // Check auth status on mount
         onMounted(async () => {
@@ -467,6 +491,7 @@ export default {
             appElement,
             videoPlayerRef,
             isFullscreen,
+            proxyUrl,
             drawerVisible,
             epgVisible,
             appBarVisible,
@@ -479,6 +504,8 @@ export default {
             airplayAvailable,
             startCast,
             requestAirPlay,
+            isXtreamPlaylist,
+            vodMode,
         };
 
     },
@@ -511,24 +538,41 @@ export default {
 }
 
 .sticky-search {
-    position: sticky;
-    top: 0;
-    z-index: 1;
+    flex-shrink: 0;
 }
 
 .no-scroll {
-    overflow: hidden;
+    overflow: hidden !important;
+}
+
+.custom-drawer .v-navigation-drawer__content {
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
 }
 
 .channels-list {
-    height: calc(100vh - 96px);
-    overflow-y: auto;
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
 }
 
 .bottom-toolbar {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
+    flex-shrink: 0 !important;
+}
+
+.vod-toggle-bar {
+    flex-shrink: 0 !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.vod-toggle {
+    width: 100%;
+}
+
+.vod-toggle-btn {
+    flex: 1 !important;
 }
 
 .custom-drawer {

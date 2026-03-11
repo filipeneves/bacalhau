@@ -145,7 +145,7 @@ if (!fs.existsSync(PLAYLISTS_DIR)) {
 }
 
 // Build FFmpeg arguments based on hardware acceleration settings
-function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, streamDir, playlistPath }) {
+function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, streamDir, playlistPath, isVod }) {
     const args = [];
     
     // Quality settings
@@ -219,10 +219,17 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
     
     // Common input options
     args.push(
-        '-i', streamUrl,
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '5',
+        '-i', streamUrl
+    );
+    
+    // Reconnect options only for live streams, not VOD
+    if (!isVod) {
+        // Insert reconnect options before -i
+        const iIdx = args.indexOf('-i');
+        args.splice(iIdx, 0, '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+    }
+    
+    args.push(
         // Only map video and audio streams - ignore subtitles/data streams that can cause errors
         '-map', '0:v:0?',   // First video stream (optional)
         '-map', '0:a:0?'    // First audio stream (optional)
@@ -342,15 +349,29 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             '-ac', '2'
         );
     }
-    args.push(
-        '-f', 'hls',
-        '-hls_time', '4',
-        '-hls_list_size', '10',
-        '-hls_flags', 'delete_segments+append_list+independent_segments',
-        '-hls_segment_filename', path.join(streamDir, 'segment%03d.ts'),
-        '-y',
-        playlistPath
-    );
+    // HLS output options differ for live vs VOD
+    if (isVod) {
+        args.push(
+            '-f', 'hls',
+            '-hls_time', '4',
+            '-hls_list_size', '0',
+            '-hls_playlist_type', 'event',
+            '-hls_flags', 'independent_segments',
+            '-hls_segment_filename', path.join(streamDir, 'segment%03d.ts'),
+            '-y',
+            playlistPath
+        );
+    } else {
+        args.push(
+            '-f', 'hls',
+            '-hls_time', '4',
+            '-hls_list_size', '10',
+            '-hls_flags', 'delete_segments+append_list+independent_segments',
+            '-hls_segment_filename', path.join(streamDir, 'segment%03d.ts'),
+            '-y',
+            playlistPath
+        );
+    }
     
     return args;
 }
@@ -374,16 +395,17 @@ app.get('/transcode', requireAuth, async (req, res) => {
     const hwDecode = req.query.hwdecode !== 'false';       // Enable/disable hardware decoding
     const preset = req.query.preset || 'fast';             // Encoding preset
     const quality = req.query.quality || 'balanced';       // performance, balanced, quality
+    const isVod = req.query.vod === 'true';                // VOD mode (full playlist, no segment deletion)
     
     if (!streamUrl) {
         return res.status(400).json({ error: 'Missing url parameter' });
     }
 
     console.log(`[Transcoder] Request to transcode: ${streamUrl}`);
-    console.log(`[Transcoder] Options: hwaccel=${hwAccel}, hwdecode=${hwDecode}, preset=${preset}, quality=${quality}`);
+    console.log(`[Transcoder] Options: hwaccel=${hwAccel}, hwdecode=${hwDecode}, preset=${preset}, quality=${quality}, vod=${isVod}`);
 
     // Check if we already have this stream with same settings
-    const streamKey = `${streamUrl}-${hwAccel}-${preset}-${quality}`;
+    const streamKey = `${streamUrl}-${hwAccel}-${preset}-${quality}-${isVod ? 'vod' : 'live'}`;
     const existingStream = Array.from(activeStreams.entries()).find(
         ([, data]) => data.streamKey === streamKey
     );
@@ -414,7 +436,8 @@ app.get('/transcode', requireAuth, async (req, res) => {
         preset,
         quality,
         streamDir,
-        playlistPath
+        playlistPath,
+        isVod
     });
 
     console.log(`[Transcoder] Starting FFmpeg for stream ${streamId}`);
@@ -1085,6 +1108,69 @@ app.post('/fetch', requireAuth, async (req, res) => {
     }
 });
 // ==================== END PROXY FETCH ENDPOINT ====================
+
+// ==================== MIXED-CONTENT PROXY ENDPOINT ====================
+// Proxy HTTP resources through the server to avoid mixed-content blocking on HTTPS.
+// Works for any resource type: images, XML, JSON, media files, etc.
+app.get('/mixed-content-proxy', async (req, res) => {
+    const targetUrl = req.query.url;
+    if (!targetUrl) {
+        return res.status(400).json({ error: 'Missing url parameter' });
+    }
+
+    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+        return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    try {
+        const protocol = targetUrl.startsWith('https://') ? require('https') : require('http');
+        const request = protocol.get(targetUrl, {
+            timeout: 15000,
+            headers: {
+                'User-Agent': 'ViTV/1.0'
+            }
+        }, (response) => {
+            // Follow redirects
+            if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+                const redirectUrl = new URL(response.headers.location, targetUrl).href;
+                return res.redirect(`/mixed-content-proxy?url=${encodeURIComponent(redirectUrl)}`);
+            }
+
+            if (response.statusCode !== 200) {
+                return res.status(response.statusCode).end();
+            }
+
+            // Forward content-type and content-length
+            const contentType = response.headers['content-type'];
+            if (contentType) {
+                res.setHeader('Content-Type', contentType);
+            }
+            const contentLength = response.headers['content-length'];
+            if (contentLength) {
+                res.setHeader('Content-Length', contentLength);
+            }
+            // Cache for 24 hours
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+
+            // Pipe the response data directly
+            response.pipe(res);
+        });
+
+        request.on('error', (err) => {
+            console.error('[MixedContentProxy] Error fetching:', targetUrl, err.message);
+            res.status(502).end();
+        });
+
+        request.on('timeout', () => {
+            request.destroy();
+            res.status(504).end();
+        });
+    } catch (err) {
+        console.error('[MixedContentProxy] Error:', err.message);
+        res.status(500).end();
+    }
+});
+// ==================== END MIXED-CONTENT PROXY ENDPOINT ====================
 
 // Health check
 app.get('/health', (req, res) => {

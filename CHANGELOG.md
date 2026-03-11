@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-11
+
+### Added
+- **VOD Support (Movies & Series)**: Browse and play Video on Demand content from Xtream Codes playlists
+  - Channels/VOD toggle in the sidebar (only shown for Xtream playlists)
+  - Movies and Series tabs with category browsing
+  - Series drill-down: season selector with episode list, metadata, and poster art
+  - Search filtering across categories, movies, series, and episodes
+  - VOD playback with native video player and seek bar
+  - Automatic transcoder fallback for unsupported formats (MKV, AVI, etc.)
+  - Full Xtream Codes API integration: categories, streams, series info, and stream URLs
+
+### Fixed
+- **VOD Transcoding**: Transcoder now properly distinguishes between live and VOD modes
+  - VOD streams use `hls_list_size=0` and `hls_playlist_type=event` to keep all segments, enabling full seek support
+  - Live streams retain existing behavior with rolling segment deletion
+  - Reconnect options (`-reconnect`) are only applied to live streams, preventing issues with VOD file sources
+- **VOD Playback**: Player correctly configures HLS.js for VOD vs live content
+  - `liveSyncDurationCount` and `liveMaxLatencyDurationCount` are only set for live streams
+  - Transcoded VOD streams now report `isLiveStream = false`, enabling the seek bar
+- **Race Condition on Channel Switch**: Added `playGeneration` counter to cancel stale async callbacks when rapidly switching channels or content, preventing ghost playback from previous selections
+- **VOD Fallback Cleanup**: Native-to-transcoder fallback for unsupported formats (MKV, AVI) no longer calls `cleanupPlayer()` which would kill the transcoded stream it just created
+- **Episode Display Names**: Series episodes now show properly formatted names like "Series Name - S01E03 - Episode Title" with zero-padded season/episode numbers
+
 ## [1.0.7] - 2026-03-03
 
 ### Added

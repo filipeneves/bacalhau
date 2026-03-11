@@ -131,6 +131,7 @@ export default {
         let currentStreamId = null; // Track transcoded stream for cleanup
         let currentRecordingId = null; // Track active recording for cleanup
         let currentHlsUrl = null; // Track current HLS URL for casting
+        let playGeneration = 0; // Track playback generation to cancel stale callbacks
         
         // CORS proxy URL for external streams (dynamic based on browser location)
         const proxyUrl = getProxyUrlBase();
@@ -146,8 +147,8 @@ export default {
         }
         
         // Request transcoding of MPEG-TS stream to HLS
-        async function getTranscodedHlsUrl(originalUrl) {
-            console.log('Requesting transcoding for:', originalUrl);
+        async function getTranscodedHlsUrl(originalUrl, isVod = false) {
+            console.log('Requesting transcoding for:', originalUrl, 'VOD:', isVod);
             console.log('Transcoding settings:', {
                 hwAccel: app.hwAcceleration,
                 hwDecode: app.hwDecoding,
@@ -164,6 +165,9 @@ export default {
                     preset: app.transcodingPreset,
                     quality: app.transcodingQuality
                 });
+                if (isVod) {
+                    params.set('vod', 'true');
+                }
                 
                 const response = await fetch(`${transcoderUrl}/transcode?${params}`);
                 if (!response.ok) {
@@ -321,6 +325,7 @@ export default {
         function cleanupPlayer() {
             const video = videoElement.value;
             hasFatalError = true; // Prevent any more error handling during cleanup
+            playGeneration++; // Invalidate any pending async callbacks
 
             // Stop any transcoded stream
             stopTranscodedStream();
@@ -375,7 +380,7 @@ export default {
                 }
             }
 
-            // Reset video element
+            // Reset video element - clone to remove ALL event listeners
             if (video) {
                 try {
                     video.pause();
@@ -519,6 +524,9 @@ export default {
             // Clean up any previous player instances
             cleanupPlayer();
 
+            // Capture current generation to detect stale async callbacks
+            const thisGeneration = playGeneration;
+
             // Use proxy for external URLs to bypass CORS
             const streamUrl = getProxiedUrl(url);
             console.log('Stream URL (proxied):', streamUrl);
@@ -526,16 +534,24 @@ export default {
             type = type || getMimeTypeFromUrl(url);
             console.log('Using type:', type);
             
-            // Determine if this is a live stream based on type
-            // HLS and MPEG-TS are typically live, MP4/WebM are typically VOD
-            const isLive = type === 'application/x-mpegURL' || 
+            // Determine if this is a live stream based on type and VOD flag
+            // HLS and MPEG-TS are typically live, MP4/WebM/MKV are typically VOD
+            // If channel has isVod flag, always treat as non-live
+            const isVod = currentChannel.value?.isVod === true;
+            const isLive = !isVod && (type === 'application/x-mpegURL' || 
                            type === 'video/mp2t' || 
-                           type === 'application/octet-stream';
+                           type === 'application/octet-stream');
             isLiveStream.value = isLive;
-            console.log('Is live stream:', isLive);
+            console.log('Is live stream:', isLive, 'Is VOD:', isVod);
 
             videoKey.value = Date.now();
             await nextTick(); // Ensure DOM is up-to-date
+
+            // Check if a newer playSource call has started
+            if (thisGeneration !== playGeneration) {
+                console.log('[VideoPlayer] Stale playSource call, aborting');
+                return;
+            }
             
             // Re-add PiP listeners after video element is recreated
             addPiPListeners();
@@ -656,8 +672,8 @@ export default {
                 hasFatalError = false;
                 
                 try {
-                    // Request transcoding to HLS format
-                    const hlsUrl = await getTranscodedHlsUrl(url);
+                    // Request transcoding to HLS format — pass isVod flag for VOD content
+                    const hlsUrl = await getTranscodedHlsUrl(url, isVod);
                     console.log('Got transcoded HLS URL:', hlsUrl);
                     currentHlsUrl = hlsUrl;
                     
@@ -668,20 +684,24 @@ export default {
                     }
                     
                     if (Hls.isSupported()) {
-                        console.log('Playing transcoded HLS stream');
-                        hlsInstance = new Hls({
+                        console.log('Playing transcoded HLS stream, isVod:', isVod);
+                        const hlsConfig = {
                             enableWorker: true,
                             lowLatencyMode: false,
                             backBufferLength: 60,
-                            liveSyncDurationCount: 3,
-                            liveMaxLatencyDurationCount: 6,
                             maxBufferLength: 30,
                             maxMaxBufferLength: 60,
                             maxBufferHole: 1,
                             nudgeOffset: 0.2,
                             nudgeMaxRetry: 10,
                             preferManagedMediaSource: false  // Force standard MediaSource for Chromium compatibility
-                        });
+                        };
+                        // Only add live sync settings for non-VOD streams
+                        if (!isVod) {
+                            hlsConfig.liveSyncDurationCount = 3;
+                            hlsConfig.liveMaxLatencyDurationCount = 6;
+                        }
+                        hlsInstance = new Hls(hlsConfig);
                         // IMPORTANT: attachMedia FIRST, then loadSource after MEDIA_ATTACHED
                         // Calling loadSource before attachMedia triggers BUFFER_RESET before
                         // the MediaSource exists, corrupting buffer-controller state and causing
@@ -692,8 +712,9 @@ export default {
                             hlsInstance.loadSource(hlsUrl);
                         });
                         hlsInstance.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
-                            isLiveStream.value = true;
-                            console.log('Transcoded HLS manifest parsed, isLive: true');
+                            // Respect isVod flag — VOD transcoded streams are not live
+                            isLiveStream.value = !isVod;
+                            console.log('Transcoded HLS manifest parsed, isLive:', !isVod);
                         });
                         // Play once a full fragment is buffered (dual approach for cross-browser compat)
                         let hlsPlayStarted = false;
@@ -777,7 +798,72 @@ export default {
                 console.log('Using native video playback for type:', type);
                 isLiveStream.value = false; // MP4/WebM are typically on-demand
                 video.src = streamUrl;
+                
+                // Restore volume settings
+                video.volume = volume.value;
+                video.muted = isMuted.value;
+                
                 video.play().catch(err => console.error("Error playing video:", err));
+                
+                // If native playback fails (e.g. MKV/unsupported codec), try transcoder
+                video.addEventListener('error', async () => {
+                    // Check if this playback session is still active
+                    if (thisGeneration !== playGeneration) {
+                        console.log('[VideoPlayer] Stale error handler, ignoring');
+                        return;
+                    }
+                    const errorCode = video.error?.code;
+                    console.warn('[VideoPlayer] Native playback error, code:', errorCode, video.error?.message);
+                    if (errorCode === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || errorCode === MediaError.MEDIA_ERR_DECODE) {
+                        console.log('[VideoPlayer] Attempting transcoder fallback for VOD');
+                        try {
+                            const hlsUrl = await getTranscodedHlsUrl(url, true);
+                            // Re-check generation after async call
+                            if (thisGeneration !== playGeneration) {
+                                console.log('[VideoPlayer] Stale transcoder fallback, aborting');
+                                return;
+                            }
+                            currentHlsUrl = hlsUrl;
+                            if (Hls.isSupported()) {
+                                // Don't call cleanupPlayer() here — it would stop the transcoded stream we just created
+                                // Just reset the video element and set up HLS
+                                if (video) {
+                                    try { video.pause(); } catch(e) {}
+                                    video.removeAttribute('src');
+                                }
+                                videoKey.value = Date.now();
+                                await nextTick();
+                                if (thisGeneration !== playGeneration) return;
+                                const retryVideo = videoElement.value;
+                                if (!retryVideo) return;
+                                
+                                hlsInstance = new Hls({
+                                    enableWorker: true,
+                                    lowLatencyMode: false,
+                                    preferManagedMediaSource: false
+                                });
+                                hlsInstance.attachMedia(retryVideo);
+                                hlsInstance.on(Hls.Events.MEDIA_ATTACHED, () => {
+                                    hlsInstance.loadSource(hlsUrl);
+                                });
+                                hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                                    isLiveStream.value = false;
+                                    console.log('[VOD] HLS manifest parsed, VOD mode');
+                                });
+                                let started = false;
+                                const doPlay = () => {
+                                    if (started) return;
+                                    started = true;
+                                    retryVideo.play().catch(e => console.error('[VOD] play error:', e));
+                                };
+                                hlsInstance.on(Hls.Events.FRAG_BUFFERED, doPlay);
+                                retryVideo.addEventListener('canplay', doPlay, { once: true });
+                            }
+                        } catch (e) {
+                            console.error('[VideoPlayer] Transcoder fallback also failed:', e);
+                        }
+                    }
+                }, { once: true });
             }
         }
 
@@ -785,6 +871,8 @@ export default {
         function getMimeTypeFromUrl(url) {
             if (url.includes('.m3u8')) return 'application/x-mpegURL';
             if (url.includes('.mp4')) return 'video/mp4';
+            if (url.includes('.mkv')) return 'video/x-matroska';
+            if (url.includes('.avi')) return 'video/x-msvideo';
             if (url.includes('.webm')) return 'video/webm';
             if (url.includes('.ts')) return 'video/mp2t'; // MPEG-TS streams (.ts extension)
             if (url.match(/\d+$/)) return 'video/mp2t'; // Raw MPEG-TS streams (no extension)
