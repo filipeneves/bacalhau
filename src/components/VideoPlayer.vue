@@ -327,16 +327,14 @@ export default {
             hasFatalError = true; // Prevent any more error handling during cleanup
             playGeneration++; // Invalidate any pending async callbacks
 
-            // Stop any transcoded stream
+            // Fire-and-forget cleanup of old transcoded stream (don't block new playback)
             stopTranscodedStream();
 
             // Stop any active recording when changing channels
             if (currentRecordingId) {
-                // Update store to reflect recording stopped
                 if (app.isRecording) {
                     app.setRecording(false);
                 }
-                // Send stop request to server
                 fetch(`${transcoderUrl}/record/stop`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -347,7 +345,6 @@ export default {
 
             // Cleanup HLS.js instance
             if (hlsInstance) {
-                console.log("Cleaning up HLS.js instance");
                 try {
                     hlsInstance.stopLoad();
                     hlsInstance.detachMedia();
@@ -360,17 +357,12 @@ export default {
 
             // Cleanup MPEG-TS player
             if (mpegtsPlayer) {
-                console.log("Cleaning up MPEG-TS player");
-                // Store reference and nullify first to prevent race conditions
                 const player = mpegtsPlayer;
                 mpegtsPlayer = null;
-                
                 try {
-                    // Remove all event listeners first
                     player.off(mpegts.Events.ERROR);
                     player.off(mpegts.Events.MEDIA_INFO);
                     player.off(mpegts.Events.LOADING_COMPLETE);
-                    
                     player.pause();
                     player.unload();
                     player.detachMediaElement();
@@ -380,7 +372,7 @@ export default {
                 }
             }
 
-            // Reset video element - clone to remove ALL event listeners
+            // Reset video element in-place (no DOM recreation needed)
             if (video) {
                 try {
                     video.pause();
@@ -529,34 +521,36 @@ export default {
 
             // Use proxy for external URLs to bypass CORS
             const streamUrl = getProxiedUrl(url);
-            console.log('Stream URL (proxied):', streamUrl);
 
             type = type || getMimeTypeFromUrl(url);
-            console.log('Using type:', type);
             
             // Determine if this is a live stream based on type and VOD flag
-            // HLS and MPEG-TS are typically live, MP4/WebM/MKV are typically VOD
-            // If channel has isVod flag, always treat as non-live
             const isVod = currentChannel.value?.isVod === true;
             const isLive = !isVod && (type === 'application/x-mpegURL' || 
                            type === 'video/mp2t' || 
                            type === 'application/octet-stream');
             isLiveStream.value = isLive;
-            console.log('Is live stream:', isLive, 'Is VOD:', isVod);
 
-            videoKey.value = Date.now();
-            await nextTick(); // Ensure DOM is up-to-date
-
-            // Check if a newer playSource call has started
-            if (thisGeneration !== playGeneration) {
-                console.log('[VideoPlayer] Stale playSource call, aborting');
-                return;
+            // For MPEG-TS streams, fire the transcoder request immediately
+            // (in parallel with video element setup) to cut latency
+            let transcoderPromise = null;
+            if (type === 'video/mp2t' || url.match(/\d+$/)) {
+                transcoderPromise = getTranscodedHlsUrl(url, isVod).catch(err => {
+                    console.error('Transcoder pre-request failed:', err);
+                    return null;
+                });
             }
-            
-            // Re-add PiP listeners after video element is recreated
-            addPiPListeners();
 
-            const video = videoElement.value;
+            // Reuse existing video element instead of recreating the DOM node.
+            // Only recreate if we have no element at all (first mount).
+            let video = videoElement.value;
+            if (!video) {
+                videoKey.value = Date.now();
+                await nextTick();
+                if (thisGeneration !== playGeneration) return;
+                addPiPListeners();
+                video = videoElement.value;
+            }
             if (!video) {
                 console.error('Video element not available');
                 return;
@@ -575,16 +569,17 @@ export default {
                     
                     hlsInstance = new Hls({
                         enableWorker: true,
-                        lowLatencyMode: false,             // Disable for smoother playback
-                        backBufferLength: 60,
-                        liveSyncDurationCount: 3,
-                        liveMaxLatencyDurationCount: 6,
-                        maxBufferLength: 30,
-                        maxMaxBufferLength: 60,
-                        maxBufferHole: 1,
+                        lowLatencyMode: true,              // Faster start for live streams
+                        backBufferLength: 30,
+                        liveSyncDurationCount: 2,          // Start after 2 segments (was 3)
+                        liveMaxLatencyDurationCount: 4,    // Tighter latency window
+                        maxBufferLength: 10,               // Smaller initial buffer target
+                        maxMaxBufferLength: 30,
+                        maxBufferHole: 0.5,
                         nudgeOffset: 0.2,
                         nudgeMaxRetry: 10,
-                        preferManagedMediaSource: false,    // Force standard MediaSource for Chromium compat
+                        startFragPrefetch: true,           // Prefetch next fragment immediately
+                        preferManagedMediaSource: false,
                         // Custom loader to proxy all requests through CORS proxy
                         xhrSetup: function(xhr, url) {
                             // Skip if already local/proxied
@@ -672,8 +667,9 @@ export default {
                 hasFatalError = false;
                 
                 try {
-                    // Request transcoding to HLS format — pass isVod flag for VOD content
-                    const hlsUrl = await getTranscodedHlsUrl(url, isVod);
+                    // Use pre-fired transcoder promise (started before DOM setup)
+                    const hlsUrl = transcoderPromise ? await transcoderPromise : await getTranscodedHlsUrl(url, isVod);
+                    if (!hlsUrl) throw new Error('Transcoder returned no URL');
                     console.log('Got transcoded HLS URL:', hlsUrl);
                     currentHlsUrl = hlsUrl;
                     
@@ -687,19 +683,19 @@ export default {
                         console.log('Playing transcoded HLS stream, isVod:', isVod);
                         const hlsConfig = {
                             enableWorker: true,
-                            lowLatencyMode: false,
-                            backBufferLength: 60,
-                            maxBufferLength: 30,
-                            maxMaxBufferLength: 60,
-                            maxBufferHole: 1,
+                            lowLatencyMode: !isVod,
+                            backBufferLength: 30,
+                            maxBufferLength: 10,
+                            maxMaxBufferLength: 30,
+                            maxBufferHole: 0.5,
                             nudgeOffset: 0.2,
                             nudgeMaxRetry: 10,
-                            preferManagedMediaSource: false  // Force standard MediaSource for Chromium compatibility
+                            startFragPrefetch: true,
+                            preferManagedMediaSource: false
                         };
-                        // Only add live sync settings for non-VOD streams
                         if (!isVod) {
-                            hlsConfig.liveSyncDurationCount = 3;
-                            hlsConfig.liveMaxLatencyDurationCount = 6;
+                            hlsConfig.liveSyncDurationCount = 2;
+                            hlsConfig.liveMaxLatencyDurationCount = 4;
                         }
                         hlsInstance = new Hls(hlsConfig);
                         // IMPORTANT: attachMedia FIRST, then loadSource after MEDIA_ATTACHED

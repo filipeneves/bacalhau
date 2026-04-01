@@ -4,7 +4,7 @@ import { parse } from 'iptv-playlist-parser';
 import { useAppStore } from './app.js';
 import { useEpgStore } from './epg.js';
 import { getTranscoderUrl } from '@/services/urls.js';
-import { getVodCategories, getVodStreams, getVodInfo, getVodStreamUrl, getSeriesCategories, getSeries, getSeriesInfo, getSeriesStreamUrl } from '@/services/xtream.js';
+import { getVodCategories, getVodStreams, getVodInfo, getVodStreamUrl, getSeriesCategories, getSeries, getSeriesInfo, getSeriesStreamUrl, getTimeshiftUrl, getLiveStreams } from '@/services/xtream.js';
 
 // API base URL for playlist storage (dynamic based on browser location)
 const TRANSCODER_URL = getTranscoderUrl();
@@ -32,6 +32,11 @@ export const usePlaylistStore = defineStore('playlist', () => {
     const vodType = ref('movie');        // 'movie' or 'series'
     const seriesInfo = ref(null);        // Selected series details (seasons/episodes)
     const selectedSeries = ref(null);    // Currently selected series item
+
+    // Timeshift state
+    const timeshiftChannels = ref([]);      // Channels with tv_archive enabled
+    const timeshiftLoading = ref(false);    // Loading state for timeshift
+    const timeshiftMode = ref(false);       // 'channels' | 'vod' | 'timeshift'
 
     // Load saved playlists from server on init
     async function initPlaylists() {
@@ -649,6 +654,128 @@ export const usePlaylistStore = defineStore('playlist', () => {
 
     // ==================== END VOD Functions ====================
 
+    // ==================== Timeshift Functions ====================
+
+    // Check if the current playlist has any timeshift channels
+    const hasTimeshiftChannels = computed(() => {
+        return timeshiftChannels.value.length > 0;
+    });
+
+    // Load timeshift channels from Xtream API
+    async function loadTimeshiftChannels() {
+        const creds = getXtreamCredentials();
+        if (!creds) return;
+
+        timeshiftLoading.value = true;
+        try {
+            const streams = await getLiveStreams(creds.server, creds.username, creds.password);
+            if (Array.isArray(streams)) {
+                timeshiftChannels.value = streams.filter(s => s.tv_archive === 1);
+                console.log(`[Timeshift] Found ${timeshiftChannels.value.length} channels with catchup/timeshift`);
+            } else {
+                timeshiftChannels.value = [];
+            }
+        } catch (err) {
+            console.error('[Timeshift] Error loading timeshift channels:', err);
+            timeshiftChannels.value = [];
+        } finally {
+            timeshiftLoading.value = false;
+        }
+    }
+
+    // Toggle timeshift mode
+    function setTimeshiftMode(enabled) {
+        timeshiftMode.value = enabled;
+        if (enabled && timeshiftChannels.value.length === 0) {
+            loadTimeshiftChannels();
+        }
+    }
+
+    // Check if a channel has timeshift support by matching it against Xtream live streams
+    function channelHasTimeshift(channel) {
+        if (!channel) return false;
+        const epgId = channel.tvg?.id;
+        const streamId = channel.streamId;
+        return timeshiftChannels.value.some(tc =>
+            (epgId && (tc.epg_channel_id === epgId || String(tc.stream_id) === epgId)) ||
+            (streamId && tc.stream_id === streamId)
+        );
+    }
+
+    // Get the Xtream stream info for a channel (to get stream_id and archive duration)
+    function getTimeshiftInfo(channel) {
+        if (!channel) return null;
+        const epgId = channel.tvg?.id;
+        const streamId = channel.streamId;
+        return timeshiftChannels.value.find(tc =>
+            (epgId && (tc.epg_channel_id === epgId || String(tc.stream_id) === epgId)) ||
+            (streamId && tc.stream_id === streamId)
+        ) || null;
+    }
+
+    // Play a timeshift program (catchup)
+    function playTimeshiftProgram(channel, program) {
+        const creds = getXtreamCredentials();
+        if (!creds) return;
+
+        const tsInfo = getTimeshiftInfo(channel);
+        if (!tsInfo) {
+            console.error('[Timeshift] No timeshift info found for channel:', channel.name);
+            return;
+        }
+
+        const durationMinutes = (program.stop - program.start) / 1000 / 60;
+        const streamUrl = getTimeshiftUrl(
+            creds.server, creds.username, creds.password,
+            tsInfo.stream_id, program.start, durationMinutes
+        );
+
+        currentChannel.value = {
+            name: `${channel.name} - ${program.title}`,
+            url: streamUrl,
+            tvg: {
+                logo: channel.tvg?.logo || tsInfo.stream_icon || '',
+                id: channel.tvg?.id
+            },
+            isVod: true, // Timeshift is seekable like VOD
+            isTimeshift: true
+        };
+    }
+
+    // Select a timeshift channel (navigate to it + expand EPG)
+    function selectTimeshiftChannel(tsChannel) {
+        // Find the matching channel in our loaded channels
+        const match = channels.value.find(ch => {
+            const epgId = ch.tvg?.id;
+            return (epgId && (tsChannel.epg_channel_id === epgId || String(tsChannel.stream_id) === epgId));
+        });
+
+        if (match) {
+            setCurrentChannel(match);
+        } else {
+            // Build a channel object from the Xtream stream data
+            const creds = getXtreamCredentials();
+            if (!creds) return;
+            setCurrentChannel({
+                name: tsChannel.name,
+                url: `${creds.server}/live/${creds.username}/${creds.password}/${tsChannel.stream_id}.ts`,
+                tvg: {
+                    logo: tsChannel.stream_icon || '',
+                    id: tsChannel.epg_channel_id || String(tsChannel.stream_id)
+                },
+                streamId: tsChannel.stream_id
+            });
+        }
+
+        // Switch back to channel view and expand EPG
+        timeshiftMode.value = false;
+        vodMode.value = false;
+        const epgStore = useEpgStore();
+        epgStore.setExpanded(true);
+    }
+
+    // ==================== END Timeshift Functions ====================
+
     return {
         isPlaylistLoaded,
         isLoadingPlaylist,
@@ -695,6 +822,17 @@ export const usePlaylistStore = defineStore('playlist', () => {
         setVodMode,
         setVodType,
         vodGoBack,
+        // Timeshift
+        timeshiftChannels,
+        timeshiftLoading,
+        timeshiftMode,
+        hasTimeshiftChannels,
+        loadTimeshiftChannels,
+        setTimeshiftMode,
+        channelHasTimeshift,
+        getTimeshiftInfo,
+        playTimeshiftProgram,
+        selectTimeshiftChannel,
     };
 
 });
