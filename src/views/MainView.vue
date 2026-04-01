@@ -187,6 +187,7 @@ import SettingsDialog from '@/components/SettingsDialog.vue';
 import RecordingsDialog from '@/components/RecordingsDialog.vue';
 import ImportPlaylistDialog from '@/components/ImportPlaylistDialog.vue';
 import ShareStreamDialog from '@/components/ShareStreamDialog.vue';
+
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { usePlaylistStore } from '@/stores/playlist';
 import { useAppStore } from '@/stores/app';
@@ -256,6 +257,13 @@ export default {
             get: () => playlist.vodMode,
             set: (val) => playlist.setVodMode(val)
         });
+
+        // Load timeshift channels when Xtream playlist is loaded
+        watch(isXtreamPlaylist, (isXtream) => {
+            if (isXtream) {
+                playlist.loadTimeshiftChannels();
+            }
+        }, { immediate: true });
 
         // Check auth status on mount
         onMounted(async () => {

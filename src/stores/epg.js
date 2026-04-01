@@ -182,53 +182,43 @@ export const useEpgStore = defineStore('epg', () => {
         return programs.filter(p => p.start > now).slice(0, limit);
     }
 
+    // Get past programs for a channel (for timeshift/catchup)
+    function getPastPrograms(channelId, limit = 20) {
+        const programs = getProgramsForChannel(channelId);
+        const now = new Date();
+        
+        return programs.filter(p => p.stop <= now).slice(-limit);
+    }
+
     // Get programs within a time range
     function getProgramsInRange(channelId, startTime, endTime) {
         const programs = getProgramsForChannel(channelId);
-        
-        const filtered = programs.filter(p => 
-            (p.start >= startTime && p.start < endTime) ||
-            (p.stop > startTime && p.stop <= endTime) ||
-            (p.start <= startTime && p.stop >= endTime)
-        );
-        
-        // Deduplicate based on start time + title (to catch true duplicates)
-        const seen = new Set();
-        const deduplicated = filtered.filter(p => {
-            // Create a key based on start time and title
+        if (!programs.length) return [];
+
+        // Programs are already sorted by start in XMLTV data. Filter overlapping window.
+        const result = [];
+        const seenKeys = new Set();
+
+        for (const p of programs) {
+            // Skip programs entirely outside the window
+            if (p.stop <= startTime) continue;
+            if (p.start >= endTime) break; // sorted, so nothing further will match
+
+            // Deduplicate by start+title
             const key = `${p.start.getTime()}-${p.title}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
-        
-        // Sort by start time
-        deduplicated.sort((a, b) => a.start - b.start);
-        
-        // Remove overlapping programs (keep the first one)
-        const nonOverlapping = [];
-        for (const program of deduplicated) {
-            // Check if this program overlaps with the previous one
-            if (nonOverlapping.length === 0) {
-                nonOverlapping.push(program);
-            } else {
-                const lastProgram = nonOverlapping[nonOverlapping.length - 1];
-                // If current program starts before the last one ends, skip it (it's overlapping)
-                if (program.start >= lastProgram.stop) {
-                    nonOverlapping.push(program);
-                } else if (program.start < lastProgram.stop && program.stop > lastProgram.stop) {
-                    // Partial overlap - adjust start time to avoid overlap
-                    const adjustedProgram = { ...program, start: lastProgram.stop };
-                    if (adjustedProgram.start < adjustedProgram.stop) {
-                        adjustedProgram.duration = (adjustedProgram.stop - adjustedProgram.start) / 1000 / 60;
-                        nonOverlapping.push(adjustedProgram);
-                    }
-                }
-                // If program is fully contained within previous one, skip it
+            if (seenKeys.has(key)) continue;
+            seenKeys.add(key);
+
+            // Skip programs fully contained inside the previous one
+            if (result.length > 0) {
+                const prev = result[result.length - 1];
+                if (p.start < prev.stop && p.stop <= prev.stop) continue;
             }
+
+            result.push(p);
         }
-        
-        return nonOverlapping;
+
+        return result;
     }
 
     const getEpgData = computed(() => epgData.value);
@@ -249,6 +239,7 @@ export const useEpgStore = defineStore('epg', () => {
         getProgramsForChannel,
         getCurrentProgram,
         getUpcomingPrograms,
+        getPastPrograms,
         getProgramsInRange,
         getEpgData,
         getIsLoaded,

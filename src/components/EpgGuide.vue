@@ -174,7 +174,7 @@ export default {
                 name: ch.name,
                 logo: proxyUrl(ch.tvg?.logo),
                 originalChannel: ch
-            })).slice(0, 20); // Limit for performance
+            })).slice(0, 50); // Limit for inline guide
         });
 
         const visibleHours = computed(() => {

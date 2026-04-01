@@ -339,6 +339,63 @@ export function getSeriesStreamUrl(server, username, password, streamId, extensi
 
 // ==================== END VOD API ====================
 
+// ==================== Timeshift / Catchup API ====================
+
+/**
+ * Get timeshift stream URL for a past program
+ * Xtream Codes servers support catchup/timeshift via a specific URL pattern.
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {number} streamId - Stream ID of the channel
+ * @param {Date} start - Program start time
+ * @param {number} durationMinutes - Duration in minutes
+ * @returns {string} Timeshift stream URL
+ */
+export function getTimeshiftUrl(server, username, password, streamId, start, durationMinutes) {
+    const baseUrl = normalizeServerUrl(server);
+    // Format start time as YYYY-MM-DD:HH-MM
+    const y = start.getFullYear();
+    const m = String(start.getMonth() + 1).padStart(2, '0');
+    const d = String(start.getDate()).padStart(2, '0');
+    const hh = String(start.getHours()).padStart(2, '0');
+    const mm = String(start.getMinutes()).padStart(2, '0');
+    const startStr = `${y}-${m}-${d}:${hh}-${mm}`;
+    const dur = Math.ceil(durationMinutes);
+    return `${baseUrl}/timeshift/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${dur}/${startStr}/${streamId}.ts`;
+}
+
+/**
+ * Get short EPG for a specific stream (useful for getting recent program data)
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {number} streamId - Stream ID
+ * @param {number} limit - Number of items to return
+ * @returns {Promise<object>} Short EPG data
+ */
+export async function getShortEpg(server, username, password, streamId, limit = 10) {
+    const baseUrl = normalizeServerUrl(server);
+    const url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_short_epg&stream_id=${encodeURIComponent(streamId)}&limit=${limit}`;
+    return proxyFetchJSON(url);
+}
+
+/**
+ * Get simple data table (all EPG) for a specific stream
+ * @param {string} server - Server URL
+ * @param {string} username - Xtream username
+ * @param {string} password - Xtream password
+ * @param {number} streamId - Stream ID
+ * @returns {Promise<object>} Full EPG listing
+ */
+export async function getSimpleDataTable(server, username, password, streamId) {
+    const baseUrl = normalizeServerUrl(server);
+    const url = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_simple_data_table&stream_id=${encodeURIComponent(streamId)}`;
+    return proxyFetchJSON(url);
+}
+
+// ==================== END Timeshift / Catchup API ====================
+
 export default {
     authenticate,
     getLiveCategories,
@@ -354,5 +411,8 @@ export default {
     getSeriesCategories,
     getSeries,
     getSeriesInfo,
-    getSeriesStreamUrl
+    getSeriesStreamUrl,
+    getTimeshiftUrl,
+    getShortEpg,
+    getSimpleDataTable
 };

@@ -32,6 +32,7 @@
 - 🔗 **Xtream Codes API** - Connect to Xtream-compatible providers
 - 🎬 **VOD Support** - Browse and play Movies & Series from Xtream Codes playlists
 - 📖 **EPG Guide** - Electronic Program Guide with XMLTV support
+- ⏪ **Timeshift / Catchup** - Watch previously aired programs on supported channels
 - 🎬 **Live Recording** - Record streams directly to your server
 - 🔗 **Stream Sharing** - Share live streams with guests via unique URLs
 - 👥 **Guest Viewer Tracking** - See who's watching your shared streams in real-time

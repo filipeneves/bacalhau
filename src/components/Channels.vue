@@ -75,6 +75,11 @@
                         </v-img>
                     </v-avatar>
                 </template>
+                <template #append>
+                    <v-icon v-if="channelHasTimeshift(item)" size="16" color="primary" title="Catchup available">
+                        mdi-history
+                    </v-icon>
+                </template>
             </v-list-item>
         </template>
     </v-virtual-scroll>
@@ -82,7 +87,7 @@
 
 <script>
 import { usePlaylistStore } from '@/stores/playlist';
-import { computed, toRefs, ref, watch, shallowRef } from 'vue';
+import { computed, toRefs, ref, watch } from 'vue';
 import { proxyUrl } from '@/services/mixedContent.js';
 
 export default {
@@ -250,6 +255,10 @@ export default {
         // Total channel count
         const totalChannels = computed(() => channels.value.length);
 
+        function channelHasTimeshift(channel) {
+            return playlist.channelHasTimeshift(channel);
+        }
+
         return {
             channels,
             playlist,
@@ -263,7 +272,8 @@ export default {
             isExpanded,
             expandAll,
             collapseAll,
-            proxyUrl
+            proxyUrl,
+            channelHasTimeshift
         };
     }
 };

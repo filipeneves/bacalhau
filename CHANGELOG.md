@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-01
+
+### Added
+- **Timeshift / Catchup Playback**: Watch previously aired programs on channels that support catchup
+  - Timeshift icon indicator next to channel names in the channel list (only shown for channels with `tv_archive` support)
+  - Redesigned EPG panel below the video player showing past, current, and upcoming programs in a vertical timeline
+  - Past programs are clickable for catchup playback with a play icon and "Catchup" chip
+  - Program detail dialog with "Watch (Catchup)" button that builds the Xtream Codes timeshift URL
+  - Auto-scrolls to the currently airing program when opening the EPG panel
+  - Progress bar on the current program showing elapsed time
+  - New Xtream Codes API integration: `getTimeshiftUrl`, `getShortEpg`, `getSimpleDataTable`
+
+### Improved
+- **EPG Grid Dialog Performance**: Completely rewritten for near-instant loading
+  - Replaced manual virtual scrolling with Vuetify's `v-virtual-scroll` for immediate rendering
+  - Replaced absolute CSS positioning with flex layout, eliminating program overlap and alignment issues
+  - Programs cache computed once per time window for all channels (O(1) per-row lookup)
+  - Time navigation with back/forward buttons and "Now" reset
+  - Now marker rendered as a percentage line across the grid
+- **Channel Switching Speed**: Optimized video player for faster playback start
+  - Video element is reused in-place instead of being destroyed and recreated on every channel switch
+  - Old transcoded stream cleanup runs non-blocking (fire-and-forget)
+  - For MPEG-TS streams, the transcoder request fires in parallel with player setup
+  - HLS.js tuned for faster first-frame: low-latency mode, smaller initial buffer, fragment prefetch
+- **EPG Data Processing**: Simplified `getProgramsInRange` to a single-pass algorithm that leverages pre-sorted data, replacing the previous filter → dedup → sort → overlap-removal pipeline
+
 ## [1.1.0] - 2026-03-11
 
 ### Added
