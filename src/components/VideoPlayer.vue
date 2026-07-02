@@ -569,10 +569,13 @@ export default {
                     
                     hlsInstance = new Hls({
                         enableWorker: true,
-                        lowLatencyMode: true,              // Faster start for live streams
+                        // Off: lowLatencyMode hugs the live edge and starts with almost
+                        // no buffer, causing bufferStalledError and a slow, nudgy start.
+                        // Starting a couple segments back begins on buffered data instead.
+                        lowLatencyMode: false,
                         backBufferLength: 30,
-                        liveSyncDurationCount: 2,          // Start after 2 segments (was 3)
-                        liveMaxLatencyDurationCount: 4,    // Tighter latency window
+                        liveSyncDurationCount: 2,          // Start 2 segments behind the edge
+                        liveMaxLatencyDurationCount: 6,    // Room before latency-catchup kicks in
                         maxBufferLength: 10,               // Smaller initial buffer target
                         maxMaxBufferLength: 30,
                         maxBufferHole: 0.5,
@@ -683,7 +686,11 @@ export default {
                         console.log('Playing transcoded HLS stream, isVod:', isVod);
                         const hlsConfig = {
                             enableWorker: true,
-                            lowLatencyMode: !isVod,
+                            // lowLatencyMode makes hls.js hug the live edge, which on a
+                            // regular (non-LL-HLS) transcoded stream means starting with
+                            // almost no buffer → bufferStalledError and a slow, nudgy start.
+                            // Off = start a few segments back with a solid buffer instead.
+                            lowLatencyMode: false,
                             backBufferLength: 30,
                             maxBufferLength: 10,
                             maxMaxBufferLength: 30,
@@ -694,8 +701,12 @@ export default {
                             preferManagedMediaSource: false
                         };
                         if (!isVod) {
-                            hlsConfig.liveSyncDurationCount = 2;
-                            hlsConfig.liveMaxLatencyDurationCount = 4;
+                            // Start 3 short (2s) segments behind the live edge so there's
+                            // always buffered runway to begin playback immediately. ~6s
+                            // behind live is imperceptible for IPTV and eliminates the
+                            // initial stall that was costing several seconds of startup.
+                            hlsConfig.liveSyncDurationCount = 3;
+                            hlsConfig.liveMaxLatencyDurationCount = 10;
                         }
                         hlsInstance = new Hls(hlsConfig);
                         // IMPORTANT: attachMedia FIRST, then loadSource after MEDIA_ATTACHED

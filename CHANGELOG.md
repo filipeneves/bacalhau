@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-02
+
+### Improved
+- **Faster Stream Startup**: Cut the wait before a live stream begins playing from ~8s to ~3s
+  - Low-latency FFmpeg input options for live streams (`-fflags nobuffer`, `-flags low_delay`, reduced `-analyzeduration`/`-probesize`) cut source probing from ~5s to under 1s
+  - Live HLS segment duration reduced from 4s to 2s so playable segments are produced sooner (VOD keeps 4s segments for efficient seeking)
+  - Forced keyframes at each segment boundary let FFmpeg cut segments exactly on time instead of waiting for the source's next keyframe
+  - Server now responds as soon as the playlist lists 2 finalized segments (previously waited for 3), and counts actual playlist entries instead of on-disk `.ts` files — the latter could include a half-written segment and hand the client an unplayable playlist
+  - Readiness polling interval tightened from 500ms to 50ms so playback starts the instant segments land
+  - Player no longer uses `lowLatencyMode` for live playback (it hugged the live edge and started with no buffer, causing `bufferStalledError` and a slow, nudgy start); it now begins a couple of segments back on already-buffered data for an immediate, stall-free start
+
+### Developer
+- **Transcoder Hot Reload**: Added `docker-compose.override.yml` that bind-mounts the transcoder source and runs it under `node --watch`, so `transcoder/server.js` changes restart the process in-place with no image rebuild (a named volume preserves the image's compiled `better-sqlite3`)
+- **Startup Timing Logs**: The transcoder logs `[Timing]` markers (spawn → input probed → encoding started → segments ready → responded) to make time-to-first-frame regressions easy to diagnose
+
 ## [1.2.0] - 2026-04-01
 
 ### Added
