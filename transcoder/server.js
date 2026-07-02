@@ -217,11 +217,24 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             break;
     }
     
+    // Low-latency input options for live streams: minimize the time FFmpeg
+    // spends probing the source before it starts producing output. The defaults
+    // (analyzeduration/probesize ~5s / 5MB) can add several seconds to startup.
+    // MPEG-TS from IPTV providers carries PAT/PMT early, so a small probe is enough.
+    if (!isVod) {
+        args.push(
+            '-fflags', 'nobuffer',
+            '-flags', 'low_delay',
+            '-analyzeduration', '1000000',  // 1s (microseconds)
+            '-probesize', '2000000'         // 2MB
+        );
+    }
+
     // Common input options
     args.push(
         '-i', streamUrl
     );
-    
+
     // Reconnect options only for live streams, not VOD
     if (!isVod) {
         // Insert reconnect options before -i
@@ -349,11 +362,23 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
             '-ac', '2'
         );
     }
-    // HLS output options differ for live vs VOD
+    // HLS output options differ for live vs VOD.
+    // Live uses short 2s segments so the very first segment is ready quickly,
+    // dramatically cutting the time-to-first-frame. VOD keeps 4s segments since
+    // startup latency matters less and larger segments seek more efficiently.
+    const segmentDuration = isVod ? 4 : 2;
+
+    // Force a keyframe at every segment boundary so the HLS muxer can cut a
+    // segment exactly at `segmentDuration` instead of waiting for the source's
+    // next keyframe (which may be many seconds away). Not possible in copy mode.
+    if (hwAccel !== 'none') {
+        args.push('-force_key_frames', `expr:gte(t,n_forced*${segmentDuration})`);
+    }
+
     if (isVod) {
         args.push(
             '-f', 'hls',
-            '-hls_time', '4',
+            '-hls_time', String(segmentDuration),
             '-hls_list_size', '0',
             '-hls_playlist_type', 'event',
             '-hls_flags', 'independent_segments',
@@ -364,7 +389,7 @@ function buildFFmpegArgs({ streamUrl, hwAccel, hwDecode, preset, quality, stream
     } else {
         args.push(
             '-f', 'hls',
-            '-hls_time', '4',
+            '-hls_time', String(segmentDuration),
             '-hls_list_size', '10',
             '-hls_flags', 'delete_segments+append_list+independent_segments',
             '-hls_segment_filename', path.join(streamDir, 'segment%03d.ts'),
@@ -443,9 +468,20 @@ app.get('/transcode', requireAuth, async (req, res) => {
     console.log(`[Transcoder] Starting FFmpeg for stream ${streamId}`);
     console.log(`[Transcoder] FFmpeg args: ffmpeg ${ffmpegArgs.join(' ')}`);
 
+    // Startup timing instrumentation — logs where the time-to-first-frame goes:
+    //   input open  = FFmpeg connecting to + probing the upstream source
+    //   first frame = FFmpeg finished probing and began producing output
+    //   1st segment = first .ts segment finalized on disk (realtime encode)
+    //   responded   = handler returns the stream URL to the client
+    const t0 = Date.now();
+    const since = () => `${Date.now() - t0}ms`;
+    let loggedInputOpen = false;
+    let loggedFirstFrame = false;
+
     const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
         stdio: ['ignore', 'pipe', 'pipe']
     });
+    console.log(`[Timing ${streamId}] ffmpeg spawned at +${since()}`);
 
     let ffmpegOutput = '';
 
@@ -457,6 +493,15 @@ app.get('/transcode', requireAuth, async (req, res) => {
         ffmpegOutput += data.toString();
         // Log only important messages
         const msg = data.toString();
+        // Timing: first sign the input opened, and first sign output started
+        if (!loggedInputOpen && (msg.includes('Input #0') || msg.includes('Stream mapping'))) {
+            loggedInputOpen = true;
+            console.log(`[Timing ${streamId}] input opened + probed at +${since()}`);
+        }
+        if (!loggedFirstFrame && (msg.includes('Output #0') || msg.includes('frame='))) {
+            loggedFirstFrame = true;
+            console.log(`[Timing ${streamId}] output/encoding started at +${since()}`);
+        }
         if (msg.includes('Error') || msg.includes('error') || msg.includes('Opening') || msg.includes('Stream')) {
             console.log(`[FFmpeg ${streamId}] ${msg.trim()}`);
         }
@@ -481,19 +526,41 @@ app.get('/transcode', requireAuth, async (req, res) => {
         startTime: Date.now()
     });
 
-    // Wait for playlist to be created and have at least 3 segments (with timeout)
+    // Wait for the playlist and the first segment(s), then respond as early as
+    // possible. Previously this waited for 3 segments (up to 12s of encoded video
+    // with 4s segments) before returning — the main source of startup latency.
+    // With 2s live segments, one ready segment is enough for hls.js to begin, and
+    // FFmpeg keeps producing more while the client sets up. Poll frequently (50ms)
+    // so we return the instant the segment lands rather than up to 500ms late.
     const maxWait = 20000; // 20 seconds
-    const checkInterval = 500;
+    const checkInterval = 50;
+    // Respond once TWO finalized segments are listed. One segment lets the client
+    // start before FFmpeg has buffered any runway, so playback catches the encoder
+    // and stalls (bufferStalledError); two segments give hls.js enough to begin
+    // smoothly while FFmpeg stays ahead.
+    const minSegments = 2;
     let waited = 0;
 
     const waitForPlaylist = () => {
         return new Promise((resolve, reject) => {
             const check = () => {
                 if (fs.existsSync(playlistPath)) {
-                    // Check if we have at least 3 segments for smooth playback
-                    const segments = fs.readdirSync(streamDir)
-                        .filter(f => f.startsWith('segment') && f.endsWith('.ts'));
-                    if (segments.length >= 3) {
+                    // Count segments actually LISTED in the playlist (#EXTINF), not
+                    // .ts files on disk — a segment file exists the moment FFmpeg
+                    // starts writing it, but it isn't playable (or in the playlist)
+                    // until finalized. Responding on the disk-file count could hand
+                    // the client a playlist with no playable segment yet, causing a
+                    // bufferStalledError. Two finalized segments give hls.js enough
+                    // runway to start smoothly.
+                    let readySegments = 0;
+                    try {
+                        const playlist = fs.readFileSync(playlistPath, 'utf8');
+                        readySegments = (playlist.match(/#EXTINF/g) || []).length;
+                    } catch (e) {
+                        // playlist mid-write; try again next tick
+                    }
+                    if (readySegments >= minSegments) {
+                        console.log(`[Timing ${streamId}] ${readySegments} segment(s) in playlist at +${since()}`);
                         resolve(true);
                     } else if (waited >= maxWait) {
                         // If timeout but playlist exists, go ahead anyway
@@ -517,6 +584,7 @@ app.get('/transcode', requireAuth, async (req, res) => {
 
     try {
         await waitForPlaylist();
+        console.log(`[Timing ${streamId}] responding to client at +${since()}`);
         console.log(`[Transcoder] HLS playlist ready for stream ${streamId}`);
 
         res.json({

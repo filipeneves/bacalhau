@@ -1,0 +1,26 @@
+# Local development overrides — Docker Compose merges this file automatically
+# on top of docker-compose.yml for every `docker compose` command in this dir.
+#
+# Purpose: hot reload for the transcoder. Editing transcoder/server.js (or
+# database.js / migrate.js) restarts the Node process in-place via `node --watch`
+# with NO image rebuild.
+#
+# How it works:
+#   - ./transcoder is bind-mounted into /app so the container sees your edits live.
+#   - The `transcoder_node_modules` named volume is layered over /app/node_modules
+#     so the bind mount does NOT shadow the image's compiled deps. This matters
+#     because better-sqlite3 is a native module built during `docker build`; using
+#     the host's (nonexistent / mismatched) node_modules would crash the process.
+#     Docker seeds this named volume from the image the first time it's created.
+#
+# To temporarily run WITHOUT hot reload (e.g. to mimic production), rename this
+# file or pass: docker compose -f docker-compose.yml up transcoder
+services:
+  transcoder:
+    volumes:
+      - ./transcoder:/app:z
+      - transcoder_node_modules:/app/node_modules
+    command: ["node", "--watch", "server.js"]
+
+volumes:
+  transcoder_node_modules:
